@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>MNRH IPD Doctor Portal — ระบบดูข้อมูลผู้ป่วยในสำหรับแพทย์</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- ==================== 1. LOGIN VIEW ==================== -->
+      <section id="login-view" class="view active">
+        <div class="login-shell">
+          <div class="login-card">
+            <div class="login-brand">
+              <div class="brand-logo" aria-hidden="true">
+                <svg
+                  width="36"
+                  height="36"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                </svg>
+              </div>
+              <div>
+                <span class="brand-badge">MNRH IPD PORTAL</span>
+                <h1>ระบบข้อมูลผู้ป่วยใน (IPD)</h1>
+              </div>
+            </div>
+
+            <form id="login-form" autocomplete="on" novalidate>
+              <div class="form-group">
+                <label for="login-username"
+                  >ชื่อผู้ใช้งาน (User / เลขบัตรประชาชน / เลข ว.)</label
+                >
+                <div class="input-icon-wrap">
+                  <svg
+                    class="input-icon"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                  <input
+                    type="text"
+                    id="login-username"
+                    name="username"
+                    placeholder="กรอก Usercode, เลข ว. หรือชื่อผู้ใช้"
+                    required
+                    autocomplete="username"
+                  />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="login-password">รหัสผ่าน (Password)</label>
+                <div class="input-icon-wrap">
+                  <svg
+                    class="input-icon"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>
+                  <input
+                    type="password"
+                    id="login-password"
+                    name="password"
+                    placeholder="กรอกรหัสผ่าน"
+                    required
+                    autocomplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    id="toggle-password-btn"
+                    class="icon-btn"
+                    aria-label="แสดงหรือซ่อนรหัสผ่าน"
+                  >
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div
+                id="login-error"
+                class="alert alert-error hidden"
+                role="alert"
+              ></div>
+
+              <button
+                type="submit"
+                id="login-submit-btn"
+                class="btn btn-primary btn-block btn-lg"
+              >
+                <span>เข้าสู่ระบบ</span>
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                >
+                  <path d="M5 12h14M12 5l7 7-7 7" />
+                </svg>
+              </button>
+            </form>
+
+            <div class="login-footer">
+              <span class="status-dot online"></span>
+              <span id="db-conn-label"
+                >PostgreSQL 192.168.43.237 • ตาราง users</span
+              >
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 2. MAIN AUTHENTICATED SHELL ==================== -->
+      <div id="main-shell" class="hidden">
+        <!-- Top App Header -->
+        <header class="topbar">
+          <div class="topbar-inner">
+            <div
+              class="topbar-brand"
+              id="topbar-home-trigger"
+              role="button"
+              tabindex="0"
+            >
+              <div class="brand-logo-sm">
+                <svg
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.3"
+                >
+                  <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                </svg>
+              </div>
+              <div>
+                <div class="topbar-title">IPD Doctor Portal</div>
+                <div class="topbar-subtitle">รพ.มหาราชนครราชสีมา</div>
+              </div>
+            </div>
+
+            <div class="topbar-user">
+              <div class="doctor-badge">
+                <div class="doctor-avatar" id="header-user-avatar">พ</div>
+                <div class="doctor-meta">
+                  <div class="doctor-name" id="header-user-name">-</div>
+                  <div class="doctor-license" id="header-user-license">-</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                id="logout-btn"
+                class="btn btn-outline btn-sm"
+                title="ออกจากระบบ"
+              >
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                  <polyline points="16 17 21 12 16 7" />
+                  <line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
+                <span class="hide-xs">ออกจากระบบ</span>
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <!-- ==================== 2A. LANDING PAGE (WARD & PATIENT LIST) ==================== -->
+        <main id="landing-view" class="main-container">
+          <!-- Ward Selection Card -->
+          <section class="ward-selector-panel card-surface">
+            <div class="section-head">
+              <div>
+                <h2>ค้นหาและเลือกหอผู้ป่วยตามรายชื่อ</h2>
+              </div>
+              <div class="ward-summary-stat" id="ward-total-badge">
+                กำลังโหลดหอผู้ป่วย...
+              </div>
+            </div>
+
+            <div class="ward-input-wrapper">
+              <div class="input-icon-wrap ward-autocomplete-box">
+                <svg
+                  class="input-icon"
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  type="text"
+                  id="ward-search-input"
+                  placeholder="พิมพ์ชื่อหอผู้ป่วย หรือรหัสวอร์ด เช่น ICU, เด็ก, อายุรกรรม, สูติ, 119, 810..."
+                  autocomplete="off"
+                />
+                <button
+                  type="button"
+                  id="clear-ward-input-btn"
+                  class="icon-btn hidden"
+                  aria-label="ล้างคำค้นหาหอผู้ป่วย"
+                >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.2"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+
+              <!-- Dropdown suggestions when typing -->
+              <div
+                id="ward-dropdown"
+                class="ward-dropdown hidden"
+                role="listbox"
+              ></div>
+            </div>
+
+            <!-- Quick horizontal/grid Ward Chips for fast touch on iPad & Mobile -->
+            <div class="ward-chips-bar">
+              <div class="ward-chips-header">
+                <button
+                  type="button"
+                  id="toggle-all-wards-btn"
+                  class="link-btn"
+                >
+                  แสดงหอผู้ป่วยทั้งหมด
+                </button>
+              </div>
+              <div id="ward-chips-container" class="ward-chips-scroll">
+                <!-- Populated dynamically -->
+              </div>
+            </div>
+          </section>
+
+          <!-- Selected Ward Patients Section -->
+          <section id="ward-patients-section" class="ward-patients-section">
+            <div class="patients-toolbar card-surface">
+              <div class="patients-toolbar-left">
+                <div class="selected-ward-Indicator">
+                  <span class="ward-code-pill" id="active-ward-code">WARD</span>
+                  <div>
+                    <h3 id="active-ward-title">กรุณาเลือกหอผู้ป่วย</h3>
+                    <p id="active-ward-subtitle">
+                      พิมพ์ค้นหาหรือแตะเลือกหอผู้ป่วยด้านบนเพื่อดูรายชื่อผู้ป่วย
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="patients-toolbar-right">
+                <div class="input-icon-wrap patient-filter-input">
+                  <svg
+                    class="input-icon"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                  <input
+                    type="text"
+                    id="patient-search-input"
+                    placeholder="ค้นหา HN, AN, ชื่อ-สกุล, เตียง..."
+                  />
+                </div>
+
+                <div
+                  class="segmented-control"
+                  role="group"
+                  aria-label="ตัวกรองสถานะผู้ป่วย"
+                >
+                  <button
+                    type="button"
+                    class="seg-btn active"
+                    data-status="active"
+                    id="filter-status-active"
+                  >
+                    กำลังรักษา (Admit)
+                  </button>
+                  <button
+                    type="button"
+                    class="seg-btn"
+                    data-status="all"
+                    id="filter-status-all"
+                  >
+                    ทั้งหมดในวอร์ด
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Loading Skeleton / Empty State / Patient Cards Grid -->
+            <div id="patients-loading" class="loading-box hidden">
+              <div class="spinner"></div>
+              <p>กำลังดึงข้อมูลผู้ป่วยในหอผู้ป่วย...</p>
+            </div>
+
+            <div id="patients-empty" class="empty-box hidden">
+              <div class="empty-icon">
+                <svg
+                  width="42"
+                  height="42"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                >
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+              </div>
+              <h4 id="patients-empty-title">ยังไม่ได้เลือกหอผู้ป่วย</h4>
+              <p id="patients-empty-desc">
+                กรุณาพิมพ์ชื่อหอผู้ป่วยในช่องด้านบน
+                หรือแตะปุ่มชื่อหอผู้ป่วยเพื่อแสดงรายการผู้ป่วย
+              </p>
+            </div>
+
+            <div id="patient-list-grid" class="patient-cards-grid">
+              <!-- Patient cards rendered here -->
+            </div>
+          </section>
+        </main>
+
+        <!-- ==================== 2B. PATIENT DETAIL & ORDERS VIEW ==================== -->
+        <main id="patient-detail-view" class="main-container hidden">
+          <!-- Back & Action Bar -->
+          <div class="detail-nav-bar">
+            <button
+              type="button"
+              id="back-to-ward-btn"
+              class="btn btn-secondary"
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+              >
+                <line x1="19" y1="12" x2="5" y2="12" />
+                <polyline points="12 19 5 12 12 5" />
+              </svg>
+              <span id="back-to-ward-label">กลับหน้ารายชื่อผู้ป่วย</span>
+            </button>
+
+            <div class="detail-nav-right">
+              <button
+                type="button"
+                id="refresh-orders-btn"
+                class="btn btn-outline btn-sm"
+              >
+                <svg
+                  width="17"
+                  height="17"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <polyline points="23 4 23 10 17 10" />
+                  <polyline points="1 20 1 14 7 14" />
+                  <path
+                    d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"
+                  />
+                </svg>
+                <span>รีเฟรชข้อมูล</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Patient Banner Summary -->
+          <section id="patient-banner" class="patient-banner card-surface">
+            <!-- Populated dynamically -->
+          </section>
+
+          <!-- Order Controls & Filter Bar -->
+          <section class="orders-control-bar card-surface">
+            <div class="orders-header-row">
+              <div>
+                <span class="eyebrow"
+                  >DOCTOR ORDERS TIMELINE • เรียงจากปัจจุบันไปอดีต</span
+                >
+                <h3 id="orders-count-heading">รายการคำสั่งการรักษา (Order)</h3>
+              </div>
+
+              <div class="orders-search-wrap">
+                <div class="input-icon-wrap">
+                  <svg
+                    class="input-icon"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                  <input
+                    type="text"
+                    id="order-item-search"
+                    placeholder="ค้นหารายการยา, Lab, X-Ray, Progress Note..."
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div
+              class="order-category-tabs"
+              id="order-category-tabs"
+              role="tablist"
+            >
+              <button type="button" class="cat-tab active" data-cat="all">
+                ทั้งหมด
+              </button>
+              <button type="button" class="cat-tab" data-cat="oneday">
+                One Day Order
+              </button>
+              <button type="button" class="cat-tab" data-cat="continue">
+                Continuous Order
+              </button>
+              <button type="button" class="cat-tab" data-cat="progress">
+                Progress Note
+              </button>
+              <button type="button" class="cat-tab" data-cat="med">
+                ยา (Medication)
+              </button>
+              <button type="button" class="cat-tab" data-cat="lab">Lab</button>
+              <button type="button" class="cat-tab" data-cat="xray">
+                X-Ray
+              </button>
+              <button type="button" class="cat-tab" data-cat="general">
+                Diet &amp; Nursing
+              </button>
+            </div>
+          </section>
+
+          <!-- Loading / Empty / Orders Timeline Container -->
+          <div id="orders-loading" class="loading-box hidden">
+            <div class="spinner"></div>
+            <p>กำลังดึงรายการคำสั่งการรักษา (Doctor Orders)...</p>
+          </div>
+
+          <div id="orders-timeline-container" class="orders-timeline">
+            <!-- Rendered chronologically from newest to oldest -->
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
