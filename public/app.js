@@ -176,8 +176,9 @@
   async function loadHealthAndSampleUsers() {
     try {
       const health = await fetch('/api/health').then(r => r.json());
-      if (health && health.status === 'ok') {
-        el.dbConnLabel.textContent = `PostgreSQL ${health.host} • DB: ${health.database} (table users)`;
+      if (health && health.host) {
+        const dbPart = health.database ? ` • DB: ${health.database}` : '';
+        el.dbConnLabel.textContent = `PostgreSQL ${health.host}${dbPart} (table users)`;
       }
     } catch (_) {}
 
@@ -482,14 +483,56 @@
       const ageText = calculateAgeText(pt.birthday);
       const los = calculateLosDays(pt.regdate);
       const diagText = pt.prediag || pt.provision_dx || pt.admit_for || 'ไม่ระบุการวินิจฉัยแรกรับ';
-      const doctorText = pt.adm_doctor_name
-        ? `${pt.adm_doctor_name}${pt.adm_doctor_license ? ` (${pt.adm_doctor_license})` : ''}`
+      const primaryDocName = pt.incharge_doctor_name || pt.adm_doctor_name || '';
+      const primaryDocLicense = pt.incharge_doctor_name ? pt.incharge_doctor_license : pt.adm_doctor_license;
+      const doctorText = primaryDocName
+        ? `${primaryDocName}${primaryDocLicense ? ` (${primaryDocLicense})` : ''}`
         : 'ไม่ระบุแพทย์';
       const orderCount = Number(pt.order_master_count || 0);
       const itemCount = Number(pt.order_item_count || 0);
       const lastOrderText = pt.last_order_date
         ? `ล่าสุด ${formatThaiDate(pt.last_order_date)} ${formatTimeShort(pt.last_order_time)}`
         : 'ยังไม่มีรายการ Order';
+
+      // Format latest vital signs for patient card
+      const vsArr = Array.isArray(pt.latest_vitals) ? pt.latest_vitals : [];
+      const vsById = {};
+      let latestVsRec = null;
+      for (const v of vsArr) {
+        if (!v || v.value === null || v.value === undefined || String(v.value).trim() === '') continue;
+        vsById[Number(v.vitalsign_item_id)] = v;
+        if (!latestVsRec) {
+          latestVsRec = v;
+        } else {
+          const curD = parsePgDate(latestVsRec.vitalsign_date);
+          const newD = parsePgDate(v.vitalsign_date);
+          const curT = String(latestVsRec.vtime || '');
+          const newT = String(v.vtime || '');
+          if (newD && (!curD || newD > curD || (newD.getTime() === curD.getTime() && newT > curT))) {
+            latestVsRec = v;
+          }
+        }
+      }
+
+      let cardVsTimeText = '-';
+      if (latestVsRec) {
+        const dPart = latestVsRec.vitalsign_date ? formatThaiDate(latestVsRec.vitalsign_date) : '';
+        let tPart = '';
+        if (latestVsRec.vtime) {
+          tPart = formatTimeShort(latestVsRec.vtime);
+        } else if (latestVsRec.slot_id !== null && latestVsRec.slot_id !== undefined) {
+          tPart = `${String(latestVsRec.slot_id).padStart(2, '0')}:00 น.`;
+        }
+        cardVsTimeText = [dPart, tPart].filter(Boolean).join(' ') || '-';
+      }
+
+      const cardTemp = vsById[1] ? `${vsById[1].value}°C` : '-';
+      const cardPulse = vsById[2] ? `${vsById[2].value}` : '-';
+      const cardRR = vsById[3] ? `${vsById[3].value}` : '-';
+      const cardBP = (vsById[4] || vsById[5])
+        ? `${vsById[4] ? vsById[4].value : '-'}/${vsById[5] ? vsById[5].value : '-'}`
+        : '-';
+      const cardSpO2 = vsById[7] ? `${vsById[7].value}%` : '-';
 
       return `
         <article class="patient-card" data-ipd-id="${pt.ipd_id}">
@@ -523,8 +566,21 @@
                 <span class="clinical-val">${escapeHtml(diagText)}</span>
               </div>
               <div class="clinical-row">
-                <span class="clinical-label">แพทย์:</span>
+                <span class="clinical-label">แพทย์เจ้าของไข้:</span>
                 <span class="clinical-val">${escapeHtml(doctorText)}</span>
+              </div>
+              <div class="clinical-row card-vitals-row">
+                <span class="clinical-label">V/S ล่าสุด:</span>
+                <div class="card-vitals-content">
+                  <div class="card-vitals-items">
+                    <span>T: <strong>${escapeHtml(cardTemp)}</strong></span>
+                    <span>P: <strong>${escapeHtml(cardPulse)}</strong></span>
+                    <span>RR: <strong>${escapeHtml(cardRR)}</strong></span>
+                    <span>BP: <strong>${escapeHtml(cardBP)}</strong></span>
+                    <span>SpO2: <strong>${escapeHtml(cardSpO2)}</strong></span>
+                  </div>
+                  <div class="card-vitals-time">เวลาที่บันทึก: ${escapeHtml(cardVsTimeText)}</div>
+                </div>
               </div>
               ${pt.drugallergy ? `
                 <div class="clinical-row" style="margin-top: 6px;">
@@ -625,19 +681,90 @@
       if (s && !allergyTexts.includes(s)) allergyTexts.push(s);
     }
 
-    // Latest vitals map by item_display
+    // Latest vitals map by item_display and vitalsign_item_id
     const latestVitalsMap = {};
+    const latestVitalsById = {};
+    let latestVitalRecord = null;
+
     for (const v of vitals) {
+      const val = v.value !== null && v.value !== undefined ? String(v.value).trim() : '';
+      if (!val) continue;
+
       const key = v.item_display || v.item_ename;
-      if (key && v.value && !latestVitalsMap[key]) {
-        latestVitalsMap[key] = v.value;
+      const itemId = Number(v.vitalsign_item_id);
+      if (key && !latestVitalsMap[key]) {
+        latestVitalsMap[key] = v;
+      }
+      if (itemId && !latestVitalsById[itemId]) {
+        latestVitalsById[itemId] = v;
+      }
+
+      if (!latestVitalRecord) {
+        latestVitalRecord = v;
+      } else {
+        const curDate = parsePgDate(latestVitalRecord.vitalsign_date);
+        const newDate = parsePgDate(v.vitalsign_date);
+        const curTime = String(latestVitalRecord.vtime || '');
+        const newTime = String(v.vtime || '');
+        if (newDate && (!curDate || newDate > curDate || (newDate.getTime() === curDate.getTime() && newTime > curTime))) {
+          latestVitalRecord = v;
+        }
       }
     }
-    const vitalKeys = Object.keys(latestVitalsMap);
 
-    const primaryDoc = pt.adm_doctor_name
-      ? `${pt.adm_doctor_name}${pt.adm_doctor_license ? ` (${pt.adm_doctor_license})` : ''}`
-      : (doctors[0] ? `${doctors[0].doctor_name} (${doctors[0].licenseno || ''})` : '-');
+    const formatVitalTimeInfo = (rec) => {
+      if (!rec) return '';
+      const dStr = rec.vitalsign_date ? formatThaiDate(rec.vitalsign_date) : '';
+      let tStr = '';
+      if (rec.vtime) {
+        tStr = formatTimeShort(rec.vtime);
+      } else if (rec.slot_id !== null && rec.slot_id !== undefined) {
+        tStr = `${String(rec.slot_id).padStart(2, '0')}:00 น.`;
+      }
+      return [dStr, tStr].filter(Boolean).join(' ');
+    };
+
+    const standardVitals = [
+      { label: 'Temp', unit: '°C', getRec: () => latestVitalsById[1] || latestVitalsMap['Temp'] },
+      { label: 'Pulse', unit: '/min', getRec: () => latestVitalsById[2] || latestVitalsMap['Pulse'] },
+      { label: 'RR', unit: '/min', getRec: () => latestVitalsById[3] || latestVitalsMap['Respirations'] },
+      {
+        label: 'BP',
+        unit: 'mmHg',
+        getCustom: () => {
+          const sbp = latestVitalsById[4] || latestVitalsMap['B.P. Systolic'];
+          const dbp = latestVitalsById[5] || latestVitalsMap['B.P. Diastolic'];
+          if (!sbp && !dbp) return null;
+          const sVal = sbp ? sbp.value : '-';
+          const dVal = dbp ? dbp.value : '-';
+          return {
+            value: `${sVal}/${dVal}`,
+            rec: sbp || dbp
+          };
+        }
+      },
+      { label: 'O2 Sat', unit: '%', getRec: () => latestVitalsById[7] || latestVitalsMap['O2 Sat'] },
+      { label: 'Pain Score', unit: '', getRec: () => latestVitalsById[6] || latestVitalsMap['Pain Score'] },
+      { label: 'BW', unit: 'kg', getRec: () => latestVitalsById[8] || latestVitalsMap['Weight'] },
+      { label: 'Height', unit: 'cm', getRec: () => latestVitalsById[9] || latestVitalsMap['Height'] },
+    ];
+
+    const hasAnyVital = Boolean(latestVitalRecord);
+    const overallVitalTimeText = hasAnyVital ? formatVitalTimeInfo(latestVitalRecord) : '-';
+
+    const inchargeFromList = doctors.find(d => Number(d.ipd_doctor_type_id) === 1 && d.active)
+      || doctors.find(d => Number(d.ipd_doctor_type_id) === 1)
+      || doctors[0];
+    const primaryDocName = pt.incharge_doctor_name
+      || (inchargeFromList && inchargeFromList.doctor_name)
+      || pt.adm_doctor_name
+      || '';
+    const primaryDocLicense = pt.incharge_doctor_name
+      ? pt.incharge_doctor_license
+      : (inchargeFromList && inchargeFromList.doctor_name ? inchargeFromList.licenseno : pt.adm_doctor_license);
+    const primaryDoc = primaryDocName
+      ? `${primaryDocName}${primaryDocLicense ? ` (${primaryDocLicense})` : ''}`
+      : '-';
 
     el.patientBanner.innerHTML = `
       <div class="banner-top">
@@ -685,12 +812,38 @@
         </div>
       ` : ''}
 
-      ${vitalKeys.length > 0 ? `
-        <div class="vitals-strip">
-          <span style="font-size: 0.78rem; font-weight: 700; color: var(--text-muted);">สัญญาณชีพล่าสุด:</span>
-          ${vitalKeys.map(k => `<span class="vital-chip">${escapeHtml(k)}: <strong>${escapeHtml(latestVitalsMap[k])}</strong></span>`).join('')}
+      <div class="vitals-strip">
+        <div class="vitals-strip-header">
+          <span class="vitals-strip-title">สัญญาณชีพล่าสุด (Vital Signs):</span>
+          <span class="vitals-strip-time">เวลาที่บันทึก: <strong>${escapeHtml(overallVitalTimeText)}</strong></span>
         </div>
-      ` : ''}
+        <div class="vitals-chips-wrap">
+          ${standardVitals.map(item => {
+            let valText = '-';
+            let timeTooltip = '';
+            if (item.getCustom) {
+              const custom = item.getCustom();
+              if (custom) {
+                valText = `${custom.value}${item.unit ? ` ${item.unit}` : ''}`;
+                timeTooltip = formatVitalTimeInfo(custom.rec);
+              }
+            } else if (item.getRec) {
+              const rec = item.getRec();
+              if (rec && rec.value !== null && rec.value !== undefined && String(rec.value).trim() !== '') {
+                valText = `${rec.value}${item.unit ? ` ${item.unit}` : ''}`;
+                timeTooltip = formatVitalTimeInfo(rec);
+              }
+            }
+            const isMissing = valText === '-';
+            return `
+              <span class="vital-chip ${isMissing ? 'vital-empty' : ''}" ${timeTooltip ? `title="บันทึกเมื่อ ${escapeHtml(timeTooltip)}"` : ''}>
+                ${escapeHtml(item.label)}: <strong>${escapeHtml(valText)}</strong>
+                ${timeTooltip && timeTooltip !== overallVitalTimeText ? `<small class="vital-item-time">(${escapeHtml(timeTooltip)})</small>` : ''}
+              </span>
+            `;
+          }).join('')}
+        </div>
+      </div>
     `;
   }
 

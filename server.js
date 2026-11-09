@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 const PORT = process.env.PORT || 3003;
+const DB_HOST = process.env.DB_HOST;
 const JWT_SECRET = process.env.JWT_SECRET || 'mnrh-dr-ipd-secret-2026';
 
 app.use(cors());
@@ -19,7 +20,7 @@ let activeDbName = process.env.DB_NAME || 'ipdmnrh';
 
 async function initDbPool() {
   const baseConfig = {
-    host: process.env.DB_HOST || '192.168.43.237',
+    host: DB_HOST,
     port: Number(process.env.DB_PORT || 5432),
     user: process.env.DB_USER || 'sprdd',
     password: process.env.DB_PASS || 'ICTMhr@MNRH2025',
@@ -36,21 +37,18 @@ async function initDbPool() {
   const testClient = new Client({ ...baseConfig, database: preferredDb });
   try {
     await testClient.connect();
-    await testClient.end();
+    await testClient.end().catch(() => {});
     activeDbName = preferredDb;
     pool = new Pool({ ...baseConfig, database: preferredDb });
     console.log(`[DB] Connected to PostgreSQL ${baseConfig.host}:${baseConfig.port}/${activeDbName}`);
   } catch (err) {
-    if (err.code === '3D000' || (err.message && err.message.includes('does not exist'))) {
-      console.log(`[DB] Database "${preferredDb}" not found on server; using "${fallbackDb}" schema on ${baseConfig.host}.`);
-      activeDbName = fallbackDb;
-      pool = new Pool({ ...baseConfig, database: fallbackDb });
-      const verifyClient = await pool.connect();
-      verifyClient.release();
-      console.log(`[DB] Connected to PostgreSQL ${baseConfig.host}:${baseConfig.port}/${activeDbName}`);
-    } else {
-      throw err;
-    }
+    await testClient.end().catch(() => {});
+    console.log(`[DB] Connecting to "${preferredDb}" failed (${err.code || err.message}); trying "${fallbackDb}" on ${baseConfig.host}...`);
+    activeDbName = fallbackDb;
+    pool = new Pool({ ...baseConfig, database: fallbackDb });
+    const verifyClient = await pool.connect();
+    verifyClient.release();
+    console.log(`[DB] Connected to PostgreSQL ${baseConfig.host}:${baseConfig.port}/${activeDbName}`);
   }
 }
 
@@ -76,12 +74,12 @@ app.get('/api/health', async (req, res) => {
     const r = await pool.query('SELECT NOW() as now');
     res.json({
       status: 'ok',
-      host: process.env.DB_HOST || '192.168.43.237',
+      host: DB_HOST,
       database: activeDbName,
       serverTime: r.rows[0].now
     });
   } catch (err) {
-    res.status(500).json({ status: 'error', error: err.message });
+    res.status(500).json({ status: 'error', host: DB_HOST, error: err.message });
   }
 });
 
@@ -314,8 +312,12 @@ app.get('/api/wards/:wardId/patients', authenticateToken, async (req, res) => {
         bm.movetime,
         TRIM(COALESCE(b.bed_name, b.bed_code, '-')) AS bed_no,
         TRIM(COALESCE(r.room_name, '')) AS room_name,
-        TRIM(COALESCE(adm_doc.fullname, '')) AS adm_doctor_name,
-        TRIM(COALESCE(adm_doc.licenseno, adm_doc.doctor_code, '')) AS adm_doctor_license,
+        TRIM(COALESCE(NULLIF(incharge_doc.doctor_name, ''), adm_doc.fullname, '')) AS incharge_doctor_name,
+        TRIM(COALESCE(NULLIF(incharge_doc.doctor_license, ''), adm_doc.licenseno, adm_doc.doctor_code, '')) AS incharge_doctor_license,
+        TRIM(COALESCE(NULLIF(incharge_doc.doctor_name, ''), adm_doc.fullname, '')) AS adm_doctor_name,
+        TRIM(COALESCE(NULLIF(incharge_doc.doctor_license, ''), adm_doc.licenseno, adm_doc.doctor_code, '')) AS adm_doctor_license,
+        TRIM(COALESCE(adm_doc.fullname, '')) AS admitting_doctor_name,
+        TRIM(COALESCE(adm_doc.licenseno, adm_doc.doctor_code, '')) AS admitting_doctor_license,
         TRIM(COALESCE(sp.name, '')) AS spclty_name,
         TRIM(COALESCE(pt.name, '')) AS pttype_name,
         TRIM(COALESCE(sev.name, '')) AS severe_name,
@@ -323,13 +325,29 @@ app.get('/api/wards/:wardId/patients', authenticateToken, async (req, res) => {
         COALESCE(ord_stats.order_master_count, 0)::int AS order_master_count,
         COALESCE(ord_stats.order_item_count, 0)::int AS order_item_count,
         ord_stats.last_order_date,
-        ord_stats.last_order_time
+        ord_stats.last_order_time,
+        vs_stats.latest_vitals
       FROM ipds i
       JOIN ipd_bedmoves bm ON bm.id = i.current_bedmove_id AND bm.deleted_at IS NULL
       JOIN patients p ON p.id = i.patient_id
       LEFT JOIN beds b ON b.id = bm.bed_id
       LEFT JOIN rooms r ON r.id = b.room_id
       LEFT JOIN officers adm_doc ON adm_doc.id = i.adm_officer_id
+      LEFT JOIN LATERAL (
+        SELECT
+          TRIM(COALESCE(o.fullname, '')) AS doctor_name,
+          TRIM(COALESCE(o.licenseno, o.doctor_code, '')) AS doctor_license
+        FROM ipd_doctor_lists dl
+        JOIN officers o ON o.id = dl.officer_id
+        WHERE dl.ipd_id = i.id AND dl.deleted_at IS NULL
+        ORDER BY
+          CASE WHEN dl.ipd_doctor_type_id = 1 THEN 0 ELSE 1 END ASC,
+          CASE WHEN dl.active IS TRUE THEN 0 ELSE 1 END ASC,
+          dl.incharge_date DESC NULLS LAST,
+          dl.incharge_time DESC NULLS LAST,
+          dl.id DESC
+        LIMIT 1
+      ) incharge_doc ON true
       LEFT JOIN spclties sp ON sp.id = i.spclty_id
       LEFT JOIN pttypes pt ON pt.id = i.pttype_id
       LEFT JOIN ipd_severes sev ON sev.id = i.ipd_severe_id
@@ -343,6 +361,27 @@ app.get('/api/wards/:wardId/patients', authenticateToken, async (req, res) => {
         LEFT JOIN doctor_orders do_item ON do_item.doctor_order_master_id = dom.id AND do_item.deleted_at IS NULL
         WHERE dom.ipd_id = i.id AND dom.deleted_at IS NULL
       ) ord_stats ON true
+      LEFT JOIN LATERAL (
+        SELECT json_agg(v_row) AS latest_vitals
+        FROM (
+          SELECT DISTINCT ON (gsd.vitalsign_item_id)
+            gsd.vitalsign_item_id,
+            gsm.vitalsign_date,
+            gsd.vtime,
+            gsd.slot_id,
+            gsd.value
+          FROM ipd_graphic_sheet_masters gsm
+          JOIN ipd_graphic_sheet_details gsd ON gsd.ipd_graphic_sheet_master_id = gsm.id
+          WHERE gsm.ipd_id = i.id AND gsm.deleted_at IS NULL
+            AND gsd.vitalsign_item_id IN (1, 2, 3, 4, 5, 6, 7)
+            AND gsd.value IS NOT NULL AND TRIM(gsd.value) <> ''
+          ORDER BY gsd.vitalsign_item_id,
+                   gsm.vitalsign_date DESC,
+                   gsd.vtime DESC NULLS LAST,
+                   gsd.slot_id DESC NULLS LAST,
+                   gsd.id DESC
+        ) v_row
+      ) vs_stats ON true
       WHERE bm.ward_id = $1
       ${filterSql}
       ORDER BY
@@ -401,8 +440,12 @@ app.get('/api/patients/:ipdId/orders', authenticateToken, async (req, res) => {
         TRIM(COALESCE(w.ward_code, '')) AS ward_code,
         TRIM(COALESCE(b.bed_name, b.bed_code, '-')) AS bed_no,
         TRIM(COALESCE(r.room_name, '')) AS room_name,
-        TRIM(COALESCE(adm_doc.fullname, '')) AS adm_doctor_name,
-        TRIM(COALESCE(adm_doc.licenseno, adm_doc.doctor_code, '')) AS adm_doctor_license,
+        TRIM(COALESCE(NULLIF(incharge_doc.doctor_name, ''), adm_doc.fullname, '')) AS incharge_doctor_name,
+        TRIM(COALESCE(NULLIF(incharge_doc.doctor_license, ''), adm_doc.licenseno, adm_doc.doctor_code, '')) AS incharge_doctor_license,
+        TRIM(COALESCE(NULLIF(incharge_doc.doctor_name, ''), adm_doc.fullname, '')) AS adm_doctor_name,
+        TRIM(COALESCE(NULLIF(incharge_doc.doctor_license, ''), adm_doc.licenseno, adm_doc.doctor_code, '')) AS adm_doctor_license,
+        TRIM(COALESCE(adm_doc.fullname, '')) AS admitting_doctor_name,
+        TRIM(COALESCE(adm_doc.licenseno, adm_doc.doctor_code, '')) AS admitting_doctor_license,
         TRIM(COALESCE(sp.name, '')) AS spclty_name,
         TRIM(COALESCE(pt.name, '')) AS pttype_name,
         TRIM(COALESCE(sev.name, '')) AS severe_name
@@ -415,6 +458,21 @@ app.get('/api/patients/:ipdId/orders', authenticateToken, async (req, res) => {
       LEFT JOIN beds b ON b.id = bm.bed_id
       LEFT JOIN rooms r ON r.id = b.room_id
       LEFT JOIN officers adm_doc ON adm_doc.id = i.adm_officer_id
+      LEFT JOIN LATERAL (
+        SELECT
+          TRIM(COALESCE(o.fullname, '')) AS doctor_name,
+          TRIM(COALESCE(o.licenseno, o.doctor_code, '')) AS doctor_license
+        FROM ipd_doctor_lists dl
+        JOIN officers o ON o.id = dl.officer_id
+        WHERE dl.ipd_id = i.id AND dl.deleted_at IS NULL
+        ORDER BY
+          CASE WHEN dl.ipd_doctor_type_id = 1 THEN 0 ELSE 1 END ASC,
+          CASE WHEN dl.active IS TRUE THEN 0 ELSE 1 END ASC,
+          dl.incharge_date DESC NULLS LAST,
+          dl.incharge_time DESC NULLS LAST,
+          dl.id DESC
+        LIMIT 1
+      ) incharge_doc ON true
       LEFT JOIN spclties sp ON sp.id = i.spclty_id
       LEFT JOIN pttypes pt ON pt.id = i.pttype_id
       LEFT JOIN ipd_severes sev ON sev.id = i.ipd_severe_id
@@ -437,7 +495,7 @@ app.get('/api/patients/:ipdId/orders', authenticateToken, async (req, res) => {
 
     // Fetch care team doctors from ipd_doctor_lists
     const docTeamRes = await pool.query(`
-      SELECT dl.id, dl.active, dl.incharge_date, dl.incharge_time,
+      SELECT dl.id, dl.active, dl.ipd_doctor_type_id, dl.incharge_date, dl.incharge_time,
              TRIM(COALESCE(o.fullname, '')) AS doctor_name,
              TRIM(COALESCE(o.licenseno, o.doctor_code, '')) AS licenseno,
              dt.name AS doctor_type_name
@@ -445,20 +503,30 @@ app.get('/api/patients/:ipdId/orders', authenticateToken, async (req, res) => {
       LEFT JOIN officers o ON o.id = dl.officer_id
       LEFT JOIN ipd_doctor_types dt ON dt.id = dl.ipd_doctor_type_id
       WHERE dl.ipd_id = $1 AND dl.deleted_at IS NULL
-      ORDER BY dl.ipd_doctor_type_id ASC, dl.id ASC
+      ORDER BY
+        CASE WHEN dl.ipd_doctor_type_id = 1 THEN 0 ELSE 1 END ASC,
+        CASE WHEN dl.active IS TRUE THEN 0 ELSE 1 END ASC,
+        dl.incharge_date DESC NULLS LAST,
+        dl.incharge_time DESC NULLS LAST,
+        dl.id DESC
     `, [ipdId]);
 
     // Fetch latest vital signs from ipd_graphic_sheet_masters & details
     const vsRes = await pool.query(`
-      SELECT gsm.vitalsign_date, gsd.vtime, gsd.slot_id, gsd.vitalsign_item_id,
-             vi.item_ename, vi.item_display, gsd.value
+      SELECT DISTINCT ON (gsd.vitalsign_item_id)
+             gsm.vitalsign_date, gsd.vtime, gsd.slot_id, gsd.vitalsign_item_id,
+             vi.item_ename, vi.item_display, gsd.value, gsd.created_at
       FROM ipd_graphic_sheet_masters gsm
       JOIN ipd_graphic_sheet_details gsd ON gsd.ipd_graphic_sheet_master_id = gsm.id
       JOIN vitalsign_items vi ON vi.id = gsd.vitalsign_item_id
       WHERE gsm.ipd_id = $1 AND gsm.deleted_at IS NULL
-        AND gsd.vitalsign_item_id IN (1, 2, 3, 4, 5, 6, 8, 9)
-      ORDER BY gsm.vitalsign_date DESC, gsd.slot_id DESC, gsd.id DESC
-      LIMIT 30
+        AND gsd.vitalsign_item_id IN (1, 2, 3, 4, 5, 6, 7, 8, 9)
+        AND gsd.value IS NOT NULL AND TRIM(gsd.value) <> ''
+      ORDER BY gsd.vitalsign_item_id,
+               gsm.vitalsign_date DESC,
+               gsd.vtime DESC NULLS LAST,
+               gsd.slot_id DESC NULLS LAST,
+               gsd.id DESC
     `, [ipdId]);
 
     // 2. Fetch Doctor Order Masters ordered from present (newest) to past (oldest)
