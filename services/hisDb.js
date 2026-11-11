@@ -1,4 +1,4 @@
-const sql = require('d:/DR_IPD_app/node_modules/mssql');
+const sql = require('mssql');
 
 const hisConfig = {
   user: process.env.HIS_DB_USERNAME || 'suphot',
