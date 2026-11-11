@@ -1088,9 +1088,210 @@
     `;
   }
 
+  function renderOrdersLabTabContent(masters, hisLabs, hisDates) {
+    const q = (state.orderSearchQuery || '').trim().toLowerCase();
+    const pt = state.currentPatientData ? state.currentPatientData.patient : {};
+
+    // Collect all order items of type Lab (typeId 6)
+    const allLabOrders = [];
+    for (const m of masters) {
+      for (const ord of (m.orders || [])) {
+        if (Number(ord.doctor_order_type_id) === 6) {
+          allLabOrders.push({ ...ord, master_order_date: m.order_date, master_order_time: m.order_time });
+        }
+      }
+    }
+
+    // Filter HIS labs by search query
+    const filteredHisLabs = (hisLabs || []).filter(r => {
+      if (!q) return true;
+      const haystack = [r.lab_name, r.result_name, r.lab_code, r.lab_type, r.lab_result, r.req_date_display].join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+
+    const filteredOrders = allLabOrders.filter(o => {
+      if (!q) return true;
+      const haystack = [o.lab_set_name, o.order_desc, o.other, o.doctor_name].join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+
+    el.ordersCountHeading.textContent = `รายการ Lab และผลตรวจจาก HIS (${filteredHisLabs.length} รายการผลตรวจ • ${filteredOrders.length} รายการสั่ง)`;
+
+    const selectedDate = (hisLabs[0] && hisLabs[0].req_date) || (hisDates[0] && hisDates[0].req_date) || '';
+
+    el.ordersTimelineContainer.innerHTML = `
+      <div class="emr-sections-stack">
+        <!-- Live HIS Lab Results Section -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head" style="flex-wrap:wrap; gap:10px;">
+            <div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <h4 class="emr-card-title">ผลการตรวจทางห้องปฏิบัติการ (HIS Live Lab Results)</h4>
+                <span class="badge-pill badge-active-pt">เชื่อมต่อระบบ HIS สด</span>
+              </div>
+              <p style="font-size:0.82rem; color:var(--text-muted); margin-top:2px;">
+                ข้อมูลผลแลปของ HN <strong>${escapeHtml(pt.hn || '-')}</strong> AN <strong>${escapeHtml(pt.an || '-')}</strong> ดึงตรงจาก HIS (MHR)
+              </p>
+            </div>
+
+            <!-- Date Selector Dropdown for HIS Dates -->
+            ${hisDates.length > 0 ? `
+              <div style="display:flex; align-items:center; gap:8px;">
+                <label for="his-lab-date-select" style="font-size:0.82rem; font-weight:600; color:var(--text-muted);">เลือกวันตรวจ:</label>
+                <select id="his-lab-date-select" class="form-select-sm" style="padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); font-family:inherit; font-size:0.86rem; font-weight:600; color:var(--text);">
+                  ${hisDates.map(d => `
+                    <option value="${escapeHtml(d.req_date)}" ${d.req_date === selectedDate ? 'selected' : ''}>
+                      ${escapeHtml(d.req_date_display)} (${escapeHtml(d.req_date_iso)})
+                    </option>
+                  `).join('')}
+                </select>
+              </div>
+            ` : ''}
+          </div>
+
+          ${filteredHisLabs.length > 0 ? `
+            <div class="emr-table-responsive">
+              <table class="emr-table">
+                <thead>
+                  <tr>
+                    <th>ลำดับ</th>
+                    <th>ประเภท</th>
+                    <th>รายการตรวจ (Lab Test)</th>
+                    <th>รายการผล (Item)</th>
+                    <th style="text-align:right;">ผลตรวจ (Result)</th>
+                    <th>หน่วย</th>
+                    <th>ค่าปกติ (Reference Range)</th>
+                    <th>เวลาส่งตรวจ</th>
+                    <th>สถานะ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${renderHisLabTableRows(filteredHisLabs)}
+                </tbody>
+              </table>
+            </div>
+          ` : `
+            <div class="emr-empty-inline">
+              ${hisDates.length === 0 ? 'ไม่พบข้อมูลผลตรวจ Lab ในระบบ HIS สำหรับผู้ป่วยรายนี้' : 'ไม่มีรายการผลตรวจ Lab ที่ตรงกับเงื่อนไขการค้นหา'}
+            </div>
+          `}
+        </section>
+
+        <!-- Doctor Order Labs Section -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">ประวัติคำสั่งตรวจ Lab ของแพทย์ในระบบ IPD (${filteredOrders.length} รายการ)</h4>
+          </div>
+          ${filteredOrders.length > 0 ? `
+            <div class="emr-table-responsive">
+              <table class="emr-table">
+                <thead>
+                  <tr>
+                    <th>วันที่-เวลาสั่ง</th>
+                    <th>รายการตรวจ Lab</th>
+                    <th>ประเภทคำสั่ง</th>
+                    <th>แพทย์ผู้สั่ง</th>
+                    <th>หมายเหตุ / คำแนะนำ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${filteredOrders.map(o => `
+                    <tr>
+                      <td><strong>${escapeHtml(formatThaiDate(o.master_order_date))}</strong> ${escapeHtml(formatTimeShort(o.master_order_time))}</td>
+                      <td><strong>${escapeHtml(o.lab_set_name || o.order_desc || '-')}</strong> ${o.lab_is_tmr ? `<span class="badge-pill badge-order-pt">ส่งตรวจพรุ่งนี้</span>` : ''}</td>
+                      <td>${o.order_type === 'D' ? 'One Day' : (o.order_type === 'C' ? 'Continue' : escapeHtml(o.order_type || '-'))}</td>
+                      <td>${escapeHtml(o.doctor_name || '-')}</td>
+                      <td>${escapeHtml(o.other || '-')}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : `
+            <div class="emr-empty-inline">ไม่มีรายการสั่งตรวจ Lab ของแพทย์ในระบบ IPD</div>
+          `}
+        </section>
+      </div>
+    `;
+
+    // Bind event listener to Date select
+    const dateSelectEl = document.getElementById('his-lab-date-select');
+    if (dateSelectEl) {
+      dateSelectEl.addEventListener('change', async (e) => {
+        const chosenDate = e.target.value;
+        try {
+          dateSelectEl.disabled = true;
+          const fresh = await apiFetch(`/api/patients/${encodeURIComponent(pt.hn)}/his-lab?date=${encodeURIComponent(chosenDate)}`);
+          if (state.currentPatientData) {
+            state.currentPatientData.hisLabResults = fresh.results || [];
+            renderOrdersLabTabContent(masters, fresh.results || [], hisDates);
+          }
+        } catch (err) {
+          alert('ไม่สามารถโหลดผลตรวจวันที่เลือกได้: ' + err.message);
+        } finally {
+          if (dateSelectEl) dateSelectEl.disabled = false;
+        }
+      });
+    }
+  }
+
+  function renderHisLabTableRows(rows) {
+    let currentType = '';
+    return rows.map((r, i) => {
+      let headerRow = '';
+      if (r.lab_type && r.lab_type !== currentType) {
+        currentType = r.lab_type;
+        headerRow = `
+          <tr class="emr-table-group-header" style="background:var(--surface-sunken, #f1f5f9); font-weight:700;">
+            <td colspan="9" style="padding:8px 12px; color:var(--text-muted); font-size:0.82rem; text-transform:uppercase; letter-spacing:0.04em;">
+              หมวด: ${escapeHtml(currentType)}
+            </td>
+          </tr>
+        `;
+      }
+
+      const isAbnormal = r.not_normal || r.not_normal_low || r.not_normal_high;
+      const abnormalClass = isAbnormal ? 'text-danger font-bold' : '';
+      const flagBadge = r.not_normal_high
+        ? `<span class="badge-pill badge-danger" style="margin-left:4px; font-size:0.7rem;">H ↑</span>`
+        : (r.not_normal_low ? `<span class="badge-pill badge-danger" style="margin-left:4px; font-size:0.7rem;">L ↓</span>` : (isAbnormal ? `<span class="badge-pill badge-danger" style="margin-left:4px; font-size:0.7rem;">!</span>` : ''));
+
+      return `
+        ${headerRow}
+        <tr class="${isAbnormal ? 'emr-row-abnormal' : ''}">
+          <td style="color:var(--text-muted); font-size:0.8rem;">${i + 1}</td>
+          <td><span class="badge-pill badge-muted" style="font-size:0.75rem;">${escapeHtml(r.lab_type || 'General')}</span></td>
+          <td><strong>${escapeHtml(r.lab_name || r.lab_code || '-')}</strong></td>
+          <td>${escapeHtml(r.result_name || '-')}</td>
+          <td style="text-align:right;">
+            <span class="${abnormalClass}">${escapeHtml(r.lab_result || '-')}</span>
+            ${flagBadge}
+          </td>
+          <td style="color:var(--text-muted); font-size:0.82rem;">${escapeHtml(r.result_unit || '')}</td>
+          <td style="color:var(--text-muted); font-size:0.82rem;">${escapeHtml(r.normal_range || '-')}</td>
+          <td style="font-size:0.8rem; color:var(--text-muted);">${escapeHtml(r.request_time || '-')}</td>
+          <td>
+            ${r.lab_result && !['--- รอดำเนินการ ---', '--- ดูผลผ่านระบบ EMR ---'].includes(r.lab_result)
+              ? `<span class="badge-pill badge-active-pt" style="font-size:0.72rem;">รายงานผลแล้ว</span>`
+              : `<span class="badge-pill badge-order-pt" style="font-size:0.72rem;">รอดำเนินการ</span>`
+            }
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
   function renderOrdersTimeline() {
     if (!state.currentPatientData) return;
     const masters = state.currentPatientData.orderMasters || [];
+    const hisLabs = state.currentPatientData.hisLabResults || [];
+    const hisDates = state.currentPatientData.hisLabDates || [];
+
+    // Special view when user clicks the "Lab" tab in Doctor Orders
+    if (state.orderCategoryFilter === 'lab') {
+      renderOrdersLabTabContent(masters, hisLabs, hisDates);
+      return;
+    }
 
     // Filter masters whose orders match current filters
     const filteredMasters = [];
@@ -1735,14 +1936,95 @@
   // 4. Lab Tab
   function renderEmrLabTab(d) {
     const orders = d.labOrders || [];
-    const results = d.labResults || [];
-    const nurseLabs = (d.nurseNotes || []).filter(n => n.lab_text);
+    const hisLabs = d.hisLabResults || [];
+    const hisDates = d.hisLabDates || [];
+    const pt = d.patient || {};
+    const selectedDate = (hisLabs[0] && hisLabs[0].req_date) || (hisDates[0] && hisDates[0].req_date) || '';
+
+    // Schedule dropdown change binding after render
+    setTimeout(() => {
+      const emrDateSelectEl = document.getElementById('emr-his-lab-date-select');
+      if (emrDateSelectEl) {
+        emrDateSelectEl.addEventListener('change', async (e) => {
+          const chosenDate = e.target.value;
+          try {
+            emrDateSelectEl.disabled = true;
+            const fresh = await apiFetch(`/api/patients/${encodeURIComponent(pt.hn)}/his-lab?date=${encodeURIComponent(chosenDate)}`);
+            if (state.currentEmrData) {
+              state.currentEmrData.hisLabResults = fresh.results || [];
+              renderActiveEmrTabContent();
+            }
+          } catch (err) {
+            alert('ไม่สามารถโหลดผลตรวจวันที่เลือกได้: ' + err.message);
+          } finally {
+            if (emrDateSelectEl) emrDateSelectEl.disabled = false;
+          }
+        });
+      }
+    }, 50);
 
     return `
       <div class="emr-sections-stack">
+        <!-- Live HIS Lab Results Section -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head" style="flex-wrap:wrap; gap:10px;">
+            <div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <h4 class="emr-card-title">ผลตรวจทางห้องปฏิบัติการ (HIS Live Lab Results)</h4>
+                <span class="badge-pill badge-active-pt">HIS MHR สด</span>
+              </div>
+              <p style="font-size:0.82rem; color:var(--text-muted); margin-top:2px;">
+                HN <strong>${escapeHtml(pt.hn || '-')}</strong> AN <strong>${escapeHtml(pt.an || '-')}</strong> • ดึงตรงจากฐานข้อมูล HIS Homc/MHR
+              </p>
+            </div>
+
+            <!-- Date Selector Dropdown for HIS Dates -->
+            ${hisDates.length > 0 ? `
+              <div style="display:flex; align-items:center; gap:8px;">
+                <label for="emr-his-lab-date-select" style="font-size:0.82rem; font-weight:600; color:var(--text-muted);">เลือกวันตรวจ:</label>
+                <select id="emr-his-lab-date-select" class="form-select-sm" style="padding:6px 12px; border-radius:8px; border:1px solid var(--border); background:var(--surface); font-family:inherit; font-size:0.86rem; font-weight:600; color:var(--text);">
+                  ${hisDates.map(dt => `
+                    <option value="${escapeHtml(dt.req_date)}" ${dt.req_date === selectedDate ? 'selected' : ''}>
+                      ${escapeHtml(dt.req_date_display)} (${escapeHtml(dt.req_date_iso)})
+                    </option>
+                  `).join('')}
+                </select>
+              </div>
+            ` : ''}
+          </div>
+
+          ${hisLabs.length > 0 ? `
+            <div class="emr-table-responsive">
+              <table class="emr-table">
+                <thead>
+                  <tr>
+                    <th>ลำดับ</th>
+                    <th>ประเภท</th>
+                    <th>รายการตรวจ (Lab Test)</th>
+                    <th>รายการผล (Item)</th>
+                    <th style="text-align:right;">ผลตรวจ (Result)</th>
+                    <th>หน่วย</th>
+                    <th>ค่าปกติ (Reference Range)</th>
+                    <th>เวลาส่งตรวจ</th>
+                    <th>สถานะ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${renderHisLabTableRows(hisLabs)}
+                </tbody>
+              </table>
+            </div>
+          ` : `
+            <div class="emr-empty-inline">
+              ${hisDates.length === 0 ? 'ไม่พบข้อมูลผลตรวจ Lab ในระบบ HIS สำหรับผู้ป่วยรายนี้' : 'ไม่มีรายการผลตรวจ Lab ในวันที่เลือก'}
+            </div>
+          `}
+        </section>
+
+        <!-- Doctor Order Labs Section -->
         <section class="emr-card card-surface">
           <div class="emr-card-head">
-            <h4 class="emr-card-title">รายการสั่งตรวจทางห้องปฏิบัติการ (Lab Orders)</h4>
+            <h4 class="emr-card-title">รายการสั่งตรวจทางห้องปฏิบัติการในระบบ IPD (Lab Orders)</h4>
             <span class="badge-pill badge-order-pt">${orders.length} รายการ</span>
           </div>
           ${orders.length > 0 ? `
@@ -1770,52 +2052,7 @@
                 </tbody>
               </table>
             </div>
-          ` : `<div class="emr-empty-inline">ไม่มีรายการสั่งตรวจทางห้องปฏิบัติการ (Lab)</div>`}
-        </section>
-
-        <section class="emr-card card-surface">
-          <div class="emr-card-head">
-            <h4 class="emr-card-title">ผลตรวจทางห้องปฏิบัติการ (Lab Results)</h4>
-            <span class="badge-pill badge-muted">${results.length + nurseLabs.length} รายการ</span>
-          </div>
-          ${results.length > 0 ? `
-            <div class="emr-table-responsive">
-              <table class="emr-table">
-                <thead>
-                  <tr>
-                    <th>วันที่-เวลา</th>
-                    <th>รายการ</th>
-                    <th>ผลตรวจ</th>
-                    <th>หน่วย</th>
-                    <th>ค่าปกติ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${results.map(r => `
-                    <tr>
-                      <td>${escapeHtml(formatThaiDate(r.result_date))} ${escapeHtml(formatTimeShort(r.result_time))}</td>
-                      <td><strong>${escapeHtml(r.lab_name || '-')}</strong></td>
-                      <td><strong class="${r.abnormal ? 'text-danger' : ''}">${escapeHtml(r.lab_result || '-')}</strong></td>
-                      <td>${escapeHtml(r.lab_items_unit || '-')}</td>
-                      <td>${escapeHtml(r.lab_items_normal_value || '-')}</td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
-          ` : nurseLabs.length > 0 ? `
-            <div class="emr-list-stack">
-              ${nurseLabs.map(nl => `
-                <div class="emr-item-card">
-                  <div class="emr-item-header">
-                    <strong>วันที่ ${escapeHtml(formatThaiDate(nl.diag_date))} ${escapeHtml(formatTimeShort(nl.diag_time))}</strong>
-                    <span class="emr-doc-tag">${escapeHtml(nl.nurse_name || '-')}</span>
-                  </div>
-                  <div class="oi-subtext">${escapeHtml(nl.lab_text)}</div>
-                </div>
-              `).join('')}
-            </div>
-          ` : `<div class="emr-empty-inline">ยังไม่มีผลตรวจทางห้องปฏิบัติการที่ซิงค์ในระบบ</div>`}
+          ` : `<div class="emr-empty-inline">ไม่มีรายการสั่งตรวจทางห้องปฏิบัติการ (Lab) ในระบบ IPD</div>`}
         </section>
       </div>
     `;

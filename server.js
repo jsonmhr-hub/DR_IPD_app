@@ -5,6 +5,7 @@ const path = require('path');
 const { Pool, Client } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const hisDb = require('./services/hisDb');
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -741,12 +742,27 @@ app.get('/api/patients/:ipdId/orders', authenticateToken, async (req, res) => {
       orders: itemsByMaster[String(master.id)] || []
     }));
 
+    // Fetch live HIS Lab results if available for this patient
+    let hisLabDates = [];
+    let hisLabResults = [];
+    try {
+      if (patient.hn) {
+        hisLabDates = await hisDb.getHisLabDates(patient.hn);
+        const reqDate = req.query.labDate || (hisLabDates[0] ? hisLabDates[0].req_date : null);
+        hisLabResults = await hisDb.getHisLabResults(patient.hn, reqDate);
+      }
+    } catch (e) {
+      console.warn('[Orders] fetch HIS lab warning:', e.message);
+    }
+
     res.json({
       patient,
       allergies: allergyRes.rows,
       doctors: docTeamRes.rows,
       vitals: vsRes.rows,
-      orderMasters: orderGroups
+      orderMasters: orderGroups,
+      hisLabDates,
+      hisLabResults
     });
   } catch (err) {
     console.error('Get patient orders error:', err);
@@ -960,7 +976,7 @@ app.get('/api/patients/:ipdId/emr', authenticateToken, async (req, res) => {
       `, [ipdId])
     ]);
 
-    // 5. Lab Orders & Results
+    // 5. Lab Orders & Results (Local & HIS Live)
     const [labOrdersRes, labResultsRes] = await Promise.all([
       pool.query(`
         SELECT d.id AS order_id, dom.order_date, dom.order_time,
@@ -985,6 +1001,18 @@ app.get('/api/patients/:ipdId/emr', authenticateToken, async (req, res) => {
         ORDER BY lr.result_date DESC NULLS LAST, lr.result_time DESC NULLS LAST, lr.id DESC
       `, [ipdId])
     ]);
+
+    let hisLabDates = [];
+    let hisLabResults = [];
+    try {
+      if (patient.hn) {
+        hisLabDates = await hisDb.getHisLabDates(patient.hn);
+        const reqDate = req.query.labDate || (hisLabDates[0] ? hisLabDates[0].req_date : null);
+        hisLabResults = await hisDb.getHisLabResults(patient.hn, reqDate);
+      }
+    } catch (e) {
+      console.warn('[EMR] fetch HIS lab warning:', e.message);
+    }
 
     // 6. X-Ray Orders & Results
     const [xrayOrdersRes, xrayResultsRes] = await Promise.all([
@@ -1287,11 +1315,34 @@ app.get('/api/patients/:ipdId/emr', authenticateToken, async (req, res) => {
       orCases: orCasesRes.rows,
       orOrders: orOrdersRes.rows,
       orReturns: orReturnsRes.rows,
-      progressNotes: progressNotesRes.rows
+      progressNotes: progressNotesRes.rows,
+      hisLabDates,
+      hisLabResults
     });
   } catch (err) {
     console.error('Get patient EMR error:', err);
     res.status(500).json({ error: 'ไม่สามารถดึงข้อมูลเวชระเบียน (EMR) ได้: ' + err.message });
+  }
+});
+
+// GET /api/patients/:hn/his-lab - Dedicated endpoint for fetching HIS Lab results by date
+app.get('/api/patients/:hn/his-lab', authenticateToken, async (req, res) => {
+  try {
+    const hn = req.params.hn;
+    const reqDate = req.query.date || null;
+    const dates = await hisDb.getHisLabDates(hn);
+    const selectedDate = reqDate || (dates[0] ? dates[0].req_date : null);
+    const results = selectedDate ? await hisDb.getHisLabResults(hn, selectedDate) : [];
+
+    res.json({
+      hn,
+      dates,
+      selectedDate,
+      results
+    });
+  } catch (err) {
+    console.error('Get HIS lab error:', err);
+    res.status(500).json({ error: 'ไม่สามารถดึงข้อมูลผล Lab จาก HIS ได้: ' + err.message });
   }
 });
 
