@@ -385,7 +385,7 @@ app.get('/api/wards/:wardId/patients', authenticateToken, async (req, res) => {
       WHERE bm.ward_id = $1
       ${filterSql}
       ORDER BY
-        CASE WHEN COALESCE(ord_stats.order_master_count, 0) > 0 THEN 0 ELSE 1 END,
+        COALESCE(NULLIF(substring(TRIM(COALESCE(b.bed_name, b.bed_code, '')) from '^[0-9]+'), '')::bigint, 999999999) ASC,
         b.display_order ASC NULLS LAST,
         TRIM(COALESCE(b.bed_name, b.bed_code, 'ZZZ')) ASC,
         i.regdate DESC,
@@ -751,6 +751,547 @@ app.get('/api/patients/:ipdId/orders', authenticateToken, async (req, res) => {
   } catch (err) {
     console.error('Get patient orders error:', err);
     res.status(500).json({ error: 'ไม่สามารถดึงข้อมูลคำสั่งการรักษา (Order) ได้: ' + err.message });
+  }
+});
+
+// GET /api/patients/:ipdId/emr - Comprehensive EMR data across all 10 tabs
+app.get('/api/patients/:ipdId/emr', authenticateToken, async (req, res) => {
+  try {
+    const ipdId = Number(req.params.ipdId);
+    if (!ipdId) {
+      return res.status(400).json({ error: 'รหัสผู้ป่วย IPD ไม่ถูกต้อง' });
+    }
+
+    // 1. Patient & Admission Info
+    const ptRes = await pool.query(`
+      SELECT
+        i.id AS ipd_id,
+        TRIM(i.an) AS an,
+        TRIM(i.vn) AS vn,
+        i.patient_id,
+        TRIM(p.hn) AS hn,
+        TRIM(COALESCE(p.pname, '')) AS pname,
+        TRIM(COALESCE(p.fname, '')) AS fname,
+        TRIM(COALESCE(p.lname, '')) AS lname,
+        TRIM(COALESCE(p.pname, '')) || TRIM(COALESCE(p.fname, '')) || ' ' || TRIM(COALESCE(p.lname, '')) AS fullname,
+        p.birthday,
+        p.sex,
+        p.drugallergy,
+        p.pmh,
+        p.mobile_phone_number,
+        bg.name AS blood_group_name,
+        brh.name AS blood_rh_name,
+        i.prediag,
+        i.provision_dx,
+        i.admit_for,
+        i.regdate,
+        i.regtime,
+        i.confirm_discharge,
+        bm.ward_id,
+        TRIM(COALESCE(w.name, '')) AS ward_name,
+        TRIM(COALESCE(w.ward_code, '')) AS ward_code,
+        TRIM(COALESCE(b.bed_name, b.bed_code, '-')) AS bed_no,
+        TRIM(COALESCE(r.room_name, '')) AS room_name,
+        TRIM(COALESCE(NULLIF(incharge_doc.doctor_name, ''), adm_doc.fullname, '')) AS incharge_doctor_name,
+        TRIM(COALESCE(NULLIF(incharge_doc.doctor_license, ''), adm_doc.licenseno, adm_doc.doctor_code, '')) AS incharge_doctor_license,
+        TRIM(COALESCE(adm_doc.fullname, '')) AS adm_doctor_name,
+        TRIM(COALESCE(adm_doc.licenseno, adm_doc.doctor_code, '')) AS adm_doctor_license,
+        TRIM(COALESCE(sp.name, '')) AS spclty_name,
+        TRIM(COALESCE(pt.name, '')) AS pttype_name,
+        TRIM(COALESCE(sev.name, '')) AS severe_name,
+        at.name AS admit_type_name
+      FROM ipds i
+      JOIN patients p ON p.id = i.patient_id
+      LEFT JOIN blood_groups bg ON bg.id = p.blood_group_id
+      LEFT JOIN blood_rhs brh ON brh.id = p.blood_rh_id
+      LEFT JOIN ipd_bedmoves bm ON bm.id = i.current_bedmove_id
+      LEFT JOIN wards w ON w.id = bm.ward_id
+      LEFT JOIN beds b ON b.id = bm.bed_id
+      LEFT JOIN rooms r ON r.id = b.room_id
+      LEFT JOIN officers adm_doc ON adm_doc.id = i.adm_officer_id
+      LEFT JOIN LATERAL (
+        SELECT
+          TRIM(COALESCE(o.fullname, '')) AS doctor_name,
+          TRIM(COALESCE(o.licenseno, o.doctor_code, '')) AS doctor_license
+        FROM ipd_doctor_lists dl
+        JOIN officers o ON o.id = dl.officer_id
+        WHERE dl.ipd_id = i.id AND dl.deleted_at IS NULL
+        ORDER BY
+          CASE WHEN dl.ipd_doctor_type_id = 1 THEN 0 ELSE 1 END ASC,
+          CASE WHEN dl.active IS TRUE THEN 0 ELSE 1 END ASC,
+          dl.incharge_date DESC NULLS LAST,
+          dl.incharge_time DESC NULLS LAST,
+          dl.id DESC
+        LIMIT 1
+      ) incharge_doc ON true
+      LEFT JOIN spclties sp ON sp.id = i.spclty_id
+      LEFT JOIN pttypes pt ON pt.id = i.pttype_id
+      LEFT JOIN ipd_severes sev ON sev.id = i.ipd_severe_id
+      LEFT JOIN ipd_admit_types at ON at.id = i.ipd_admit_type_id
+      WHERE i.id = $1
+    `, [ipdId]);
+
+    if (ptRes.rows.length === 0) {
+      return res.status(404).json({ error: 'ไม่พบข้อมูลผู้ป่วยในระบบ' });
+    }
+    const patient = ptRes.rows[0];
+
+    // 2. Allergies & Bed Moves History
+    const [allergyRes, bedMovesRes] = await Promise.all([
+      pool.query(`
+        SELECT id, agent, symptom, relation_level, report_date, note
+        FROM patient_allergies
+        WHERE patient_id = $1 OR TRIM(hn) = $2
+        ORDER BY report_date DESC NULLS LAST, id DESC
+      `, [patient.patient_id, patient.hn]),
+      pool.query(`
+        SELECT bm.id, bm.movedate, bm.movetime, bm.ward_id,
+               TRIM(COALESCE(w.name, '')) AS ward_name,
+               TRIM(COALESCE(b.bed_name, b.bed_code, '-')) AS bed_no,
+               TRIM(COALESCE(r.room_name, '')) AS room_name,
+               bmt.bedmove_type_name AS move_type_name
+        FROM ipd_bedmoves bm
+        LEFT JOIN wards w ON w.id = bm.ward_id
+        LEFT JOIN beds b ON b.id = bm.bed_id
+        LEFT JOIN rooms r ON r.id = b.room_id
+        LEFT JOIN ipd_bedmove_types bmt ON bmt.id = bm.bedmove_type_id
+        WHERE bm.ipd_id = $1 AND bm.deleted_at IS NULL
+        ORDER BY bm.movedate DESC NULLS LAST, bm.movetime DESC NULLS LAST, bm.id DESC
+      `, [ipdId])
+    ]);
+
+    // 3. Vital Signs History (full timeline + latest per item)
+    const [latestVsRes, historyVsRes, scoringRes] = await Promise.all([
+      pool.query(`
+        SELECT DISTINCT ON (gsd.vitalsign_item_id)
+               gsm.vitalsign_date, gsd.vtime, gsd.slot_id, gsd.vitalsign_item_id,
+               vi.item_ename, vi.item_display, gsd.value, gsd.created_at
+        FROM ipd_graphic_sheet_masters gsm
+        JOIN ipd_graphic_sheet_details gsd ON gsd.ipd_graphic_sheet_master_id = gsm.id
+        JOIN vitalsign_items vi ON vi.id = gsd.vitalsign_item_id
+        WHERE gsm.ipd_id = $1 AND gsm.deleted_at IS NULL
+          AND gsd.vitalsign_item_id IN (1, 2, 3, 4, 5, 6, 7, 8, 9)
+          AND gsd.value IS NOT NULL AND TRIM(gsd.value) <> ''
+        ORDER BY gsd.vitalsign_item_id,
+                 gsm.vitalsign_date DESC,
+                 gsd.vtime DESC NULLS LAST,
+                 gsd.slot_id DESC NULLS LAST,
+                 gsd.id DESC
+      `, [ipdId]),
+      pool.query(`
+        SELECT gsm.id AS master_id, gsm.vitalsign_date, gsd.vtime, gsd.slot_id,
+               gsd.vitalsign_item_id, vi.item_ename, vi.item_display, gsd.value,
+               ns.nurse_shift_name, gsd.created_at
+        FROM ipd_graphic_sheet_masters gsm
+        JOIN ipd_graphic_sheet_details gsd ON gsd.ipd_graphic_sheet_master_id = gsm.id
+        JOIN vitalsign_items vi ON vi.id = gsd.vitalsign_item_id
+        LEFT JOIN ipd_nurse_shifts ns ON ns.id = gsd.ipd_nurse_shift_id
+        WHERE gsm.ipd_id = $1 AND gsm.deleted_at IS NULL
+          AND gsd.vitalsign_item_id IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 20)
+          AND gsd.value IS NOT NULL AND TRIM(gsd.value) <> ''
+        ORDER BY gsm.vitalsign_date DESC,
+                 COALESCE(gsd.vtime::text, LPAD(COALESCE(gsd.slot_id, 0)::text, 2, '0') || ':00:00') DESC,
+                 gsd.slot_id DESC NULLS LAST,
+                 gsd.vitalsign_item_id ASC
+        LIMIT 300
+      `, [ipdId]),
+      pool.query(`
+        SELECT cs.id, cs.score_date, cs.score_time, cs.nurse_shift_date, cs.score, cs.note,
+               cst.name AS scoring_name, cst.short_name,
+               csr.name AS result_name,
+               ns.nurse_shift_name,
+               TRIM(COALESCE(u.name, '')) AS created_by_name
+        FROM ipd_clinical_scorings cs
+        LEFT JOIN ipd_clinical_scoring_types cst ON cst.id = cs.clinical_scoring_type_id
+        LEFT JOIN ipd_clinical_scoring_results csr ON csr.id = cs.clinical_scoring_result_id
+        LEFT JOIN ipd_nurse_shifts ns ON ns.id = cs.ipd_nurse_shift_id
+        LEFT JOIN users u ON u.id = cs.created_by
+        WHERE cs.ipd_id = $1 AND cs.deleted_at IS NULL
+        ORDER BY COALESCE(cs.score_date, cs.nurse_shift_date) DESC NULLS LAST, cs.score_time DESC NULLS LAST, cs.id DESC
+        LIMIT 50
+      `, [ipdId])
+    ]);
+
+    // 4. Nurse Notes
+    const [nurseNotesRes, nurseSummariesRes] = await Promise.all([
+      pool.query(`
+        SELECT nn.id, nn.diag_date, nn.diag_time, nn.eva_result, nn.note_type_desc,
+               nnd.diag_name, nnd.goal,
+               ns.nurse_shift_name,
+               es.name AS eva_status_name,
+               nar.body AS narrative_body,
+               nl.lab_text,
+               TRIM(COALESCE(u.name, '')) AS nurse_name,
+               COALESCE((
+                 SELECT json_agg(json_build_object('asses_name', nna.asses_name, 'asses_value', inna.asses_value, 'unit', nna.unit))
+                 FROM ipd_nurse_note_asses inna
+                 LEFT JOIN nurse_note_asses nna ON nna.id = inna.nurse_note_asses_id
+                 WHERE inna.ipd_nurse_note_id = nn.id
+               ), '[]'::json) AS assessments,
+               COALESCE((
+                 SELECT json_agg(json_build_object('inter_name', nni.inter_name, 'inter_value', inni.inter_value, 'unit', nni.unit))
+                 FROM ipd_nurse_note_inters inni
+                 LEFT JOIN nurse_note_inters nni ON nni.id = inni.nurse_note_inter_id
+                 WHERE inni.ipd_nurse_note_id = nn.id
+               ), '[]'::json) AS interventions,
+               COALESCE((
+                 SELECT json_agg(json_build_object('sdiag_name', nns.sdiag_name))
+                 FROM ipd_nurse_note_sdiags inns
+                 LEFT JOIN nurse_note_sdiags nns ON nns.id = inns.nurse_note_sdiag_id
+                 WHERE inns.ipd_nurse_note_id = nn.id
+               ), '[]'::json) AS sub_diags
+        FROM ipd_nurse_notes nn
+        LEFT JOIN nurse_note_diags nnd ON nnd.id = nn.nurse_note_diag_id
+        LEFT JOIN ipd_nurse_shifts ns ON ns.id = nn.ipd_nurse_shift_id
+        LEFT JOIN nurse_note_eva_statuses es ON es.id = nn.nurse_note_eva_status_id
+        LEFT JOIN mnrh_nurse_note_narratives nar ON nar.ipd_nurse_note_id = nn.id
+        LEFT JOIN mnrh_nurse_note_labs nl ON nl.ipd_nurse_note_id = nn.id
+        LEFT JOIN users u ON u.id = nn.created_by
+        WHERE nn.ipd_id = $1 AND nn.deleted_at IS NULL
+        ORDER BY nn.diag_date DESC NULLS LAST, nn.diag_time DESC NULLS LAST, nn.id DESC
+        LIMIT 100
+      `, [ipdId]),
+      pool.query(`
+        SELECT s.id, s.note_at, s.body, TRIM(COALESCE(u.name, '')) AS nurse_name
+        FROM mnrh_nurse_note_summaries s
+        LEFT JOIN users u ON u.id = s.created_by
+        WHERE s.ipd_id = $1 AND s.deleted_at IS NULL
+        ORDER BY s.note_at DESC NULLS LAST, s.id DESC
+      `, [ipdId])
+    ]);
+
+    // 5. Lab Orders & Results
+    const [labOrdersRes, labResultsRes] = await Promise.all([
+      pool.query(`
+        SELECT d.id AS order_id, dom.order_date, dom.order_time,
+               COALESCE(lab.lab_set_name, d.order_desc) AS lab_name,
+               lab.is_tmr, lab.order_date AS target_date,
+               d.other, d.order_type,
+               TRIM(COALESCE(o.fullname, u.name, '')) AS doctor_name
+        FROM doctor_order_masters dom
+        JOIN doctor_orders d ON d.doctor_order_master_id = dom.id AND d.deleted_at IS NULL
+        LEFT JOIN doctor_order_labs lab ON lab.id = d.ref_id
+        LEFT JOIN users u ON u.id = dom.created_by
+        LEFT JOIN officers o ON o.id = u.officer_id
+        WHERE dom.ipd_id = $1 AND dom.deleted_at IS NULL AND d.doctor_order_type_id = 6
+        ORDER BY dom.order_date DESC, dom.order_time DESC, d.id DESC
+      `, [ipdId]),
+      pool.query(`
+        SELECT lr.id, lr.result_date, lr.result_time, lr.lab_result, lr.abnormal, lr.lab_result_status,
+               hl.lab_name, hl.lab_items_unit, hl.lab_items_normal_value
+        FROM lab_results lr
+        LEFT JOIN his_labs hl ON hl.id = lr.lab_item_id
+        WHERE lr.ipd_id = $1
+        ORDER BY lr.result_date DESC NULLS LAST, lr.result_time DESC NULLS LAST, lr.id DESC
+      `, [ipdId])
+    ]);
+
+    // 6. X-Ray Orders & Results
+    const [xrayOrdersRes, xrayResultsRes] = await Promise.all([
+      pool.query(`
+        SELECT d.id AS order_id, dom.order_date, dom.order_time,
+               COALESCE(rad.xray_set_name, d.order_desc) AS xray_name,
+               rad.xn, rad.clinical_info, rad.clinical_diag,
+               xp.priority_name,
+               d.other, d.order_type,
+               TRIM(COALESCE(o.fullname, u.name, '')) AS doctor_name
+        FROM doctor_order_masters dom
+        JOIN doctor_orders d ON d.doctor_order_master_id = dom.id AND d.deleted_at IS NULL
+        LEFT JOIN doctor_order_rads rad ON rad.id = d.ref_id
+        LEFT JOIN xray_priorities xp ON xp.id = rad.xray_priority_id
+        LEFT JOIN users u ON u.id = dom.created_by
+        LEFT JOIN officers o ON o.id = u.officer_id
+        WHERE dom.ipd_id = $1 AND dom.deleted_at IS NULL AND d.doctor_order_type_id = 7
+        ORDER BY dom.order_date DESC, dom.order_time DESC, d.id DESC
+      `, [ipdId]),
+      pool.query(`
+        SELECT xr.id, xr.xn, xr.request_date, xr.request_time, xr.clinical_information,
+               xr.report_date, xr.report_time, xr.report_text, xr.confirm
+        FROM xray_results xr
+        WHERE xr.ipd_id = $1
+        ORDER BY xr.request_date DESC NULLS LAST, xr.request_time DESC NULLS LAST, xr.id DESC
+      `, [ipdId])
+    ]);
+
+    // 7. Procedures & Invasive Devices / Records
+    const [ipdProcRes, orderProcRes, recordListsRes] = await Promise.all([
+      pool.query(`
+        SELECT pr.id, pr.pdate, pr.ptime, pr.end_date, pr.end_time, pr.note,
+               ic.code AS icd9_code, ic.icd9cm, ic.print_text, ic.search_text,
+               sp.name AS spclty_name,
+               TRIM(COALESCE(u.name, '')) AS created_by_name
+        FROM ipd_procedures pr
+        LEFT JOIN icd9s ic ON ic.id = pr.icd9_id
+        LEFT JOIN spclties sp ON sp.id = pr.spclty_id
+        LEFT JOIN users u ON u.id = pr.created_by
+        WHERE pr.ipd_id = $1 AND pr.deleted_at IS NULL
+        ORDER BY pr.pdate DESC NULLS LAST, pr.ptime DESC NULLS LAST, pr.id DESC
+      `, [ipdId]),
+      pool.query(`
+        SELECT dop.id, dop.note, dop.created_at,
+               d.order_desc, d.other, dom.order_date, dom.order_time,
+               TRIM(COALESCE(u.name, '')) AS created_by_name
+        FROM doctor_order_procedures dop
+        JOIN doctor_orders d ON d.id = dop.doctor_order_id AND d.deleted_at IS NULL
+        JOIN doctor_order_masters dom ON dom.id = d.doctor_order_master_id AND dom.deleted_at IS NULL
+        LEFT JOIN users u ON u.id = dop.created_by
+        WHERE dom.ipd_id = $1 AND dop.deleted_at IS NULL
+        ORDER BY dom.order_date DESC, dom.order_time DESC, dop.id DESC
+      `, [ipdId]),
+      pool.query(`
+        SELECT rl.id, rl.started_at, rl.ended_at, rl.duration, rl.remark,
+               rec.record_name,
+               TRIM(COALESCE(u.name, '')) AS created_by_name
+        FROM ipd_record_lists rl
+        LEFT JOIN ipd_records rec ON rec.id = rl.ipd_record_id
+        LEFT JOIN users u ON u.id = rl.created_by
+        WHERE rl.ipd_id = $1 AND rl.deleted_at IS NULL
+        ORDER BY rl.started_at DESC NULLS LAST, rl.id DESC
+      `, [ipdId])
+    ]);
+
+    // 8. Documents (Chart Docs, Assessments, Paper Scans, Consults)
+    const [chartDocsRes, asmsRes, paperScansRes, consultsRes] = await Promise.all([
+      pool.query(`
+        SELECT cd.id, cd.doc_key, cd.doc_date, cd.doc_time, cd.data, cd.signed_at,
+               TRIM(COALESCE(u.name, '')) AS created_by_name
+        FROM mnrh_nurse_chart_docs cd
+        LEFT JOIN users u ON u.id = cd.created_by
+        WHERE cd.ipd_id = $1 AND cd.deleted_at IS NULL
+        ORDER BY cd.doc_date DESC NULLS LAST, cd.doc_time DESC NULLS LAST, cd.id DESC
+      `, [ipdId]),
+      pool.query(`
+        SELECT a.id, a.asm_date, a.asm_time, a.note, a.saved_at,
+               fa.asm_name,
+               ns.nurse_shift_name,
+               TRIM(COALESCE(u.name, '')) AS created_by_name,
+               COALESCE((
+                 SELECT json_agg(json_build_object(
+                   'label', COALESCE(fad.web_label, fad.report_label, ''),
+                   'value', COALESCE(fav.label, ad.asm_value_text, ad.asm_value, ''),
+                   'other', ad.other
+                 ) ORDER BY fad.display_order ASC NULLS LAST, ad.id ASC)
+                 FROM ipd_asm_details ad
+                 LEFT JOIN ipd_form_asm_details fad ON fad.id = ad.ipd_form_asm_detail_id
+                 LEFT JOIN ipd_form_asm_values fav ON fav.id::text = ad.ipd_form_asm_value_id
+                 WHERE ad.ipd_asm_id = a.id AND ad.deleted_at IS NULL
+               ), '[]'::json) AS details
+        FROM ipd_asms a
+        LEFT JOIN ipd_form_asms fa ON fa.id = a.ipd_asm_form_id
+        LEFT JOIN ipd_nurse_shifts ns ON ns.id = a.ipd_nurse_shift_id
+        LEFT JOIN users u ON u.id = a.created_by
+        WHERE a.ipd_id = $1 AND a.deleted_at IS NULL
+        ORDER BY a.asm_date DESC NULLS LAST, a.asm_time DESC NULLS LAST, a.id DESC
+      `, [ipdId]),
+      pool.query(`
+        SELECT ps.id, ps.file_name, ps.note, ps.created_at,
+               pt.name AS paper_type_name,
+               TRIM(COALESCE(u.name, '')) AS created_by_name
+        FROM paper_scans ps
+        LEFT JOIN paper_types pt ON pt.id = ps.paper_type_id
+        LEFT JOIN users u ON u.id = ps.created_by
+        WHERE ps.ipd_id = $1
+        ORDER BY ps.created_at DESC, ps.id DESC
+      `, [ipdId]),
+      pool.query(`
+        SELECT con.id, con.clinical_diag, con.clinical_info, con.created_at,
+               sp.name AS spclty_name,
+               cr.text AS reason_text,
+               cn.text AS needed_text,
+               TRIM(COALESCE(o.fullname, u.name, '')) AS from_doctor_name
+        FROM consults con
+        LEFT JOIN spclties sp ON sp.id = con.spclty_id
+        LEFT JOIN consult_reasons cr ON cr.id = con.consult_reason_id
+        LEFT JOIN consult_neededs cn ON cn.id = con.consult_needed_id
+        LEFT JOIN doctor_orders d ON d.id = con.doctor_order_id
+        LEFT JOIN doctor_order_masters dom ON dom.id = d.doctor_order_master_id
+        LEFT JOIN users u ON u.id = dom.created_by
+        LEFT JOIN officers o ON o.id = u.officer_id
+        WHERE (dom.ipd_id = $1 OR con.ipd_id = $1) AND con.deleted_at IS NULL
+        ORDER BY con.created_at DESC, con.id DESC
+      `, [ipdId]).catch(() => ({ rows: [] }))
+    ]);
+
+    // 9. Discharge Summary (ipd_dches, ipd_summaries, ipd_diags, ipd_diag_texts,ipd_nurse_dcs)
+    const [dchRes, summaryRes, diagsRes, diagTextsRes, homeMedRes] = await Promise.all([
+      pool.query(`
+        SELECT dch.*,
+               dt.name AS dch_type_name,
+               ds.name AS dch_status_name,
+               dts.name AS dch_type_sub_name,
+               TRIM(COALESCE(o_dch.fullname, '')) AS dch_doctor_name,
+               TRIM(COALESCE(o_dch.licenseno, o_dch.doctor_code, '')) AS dch_doctor_license,
+               TRIM(COALESCE(o_sum.fullname, '')) AS summary_doctor_name
+        FROM ipd_dches dch
+        LEFT JOIN dch_types dt ON dt.id = dch.dch_type_id
+        LEFT JOIN dch_statuses ds ON ds.id = dch.dch_status_id
+        LEFT JOIN dch_type_subs dts ON dts.id = dch.dch_type_sub_id
+        LEFT JOIN officers o_dch ON o_dch.id = dch.dch_officer_id
+        LEFT JOIN officers o_sum ON o_sum.id = dch.summary_dc_officer_id
+        WHERE dch.ipd_id = $1 AND dch.deleted_at IS NULL
+        ORDER BY dch.id DESC
+      `, [ipdId]),
+      pool.query(`
+        SELECT s.*,
+               dt.name AS dch_type_name,
+               ds.name AS dch_status_name,
+               TRIM(COALESCE(u_doc.name, '')) AS doctor_user_name,
+               TRIM(COALESCE(u_cod.name, '')) AS coder_user_name
+        FROM ipd_summaries s
+        LEFT JOIN dch_types dt ON dt.id = s.dch_type_id
+        LEFT JOIN dch_statuses ds ON ds.id = s.dch_status_id
+        LEFT JOIN users u_doc ON u_doc.id = s.user_id
+        LEFT JOIN users u_cod ON u_cod.id = s.coder_id
+        WHERE s.ipd_id = $1
+        ORDER BY s.id DESC
+      `, [ipdId]),
+      pool.query(`
+        SELECT dg.id, dg.tab, dg.diag_type_id, dg.code, dg.display_order,
+               dt.diag_type_name,
+               ic10.print_text AS icd10_name,
+               ic9.print_text AS icd9_name,
+               TRIM(COALESCE(u.name, '')) AS doctor_name
+        FROM ipd_diags dg
+        LEFT JOIN diag_types dt ON dt.id = dg.diag_type_id
+        LEFT JOIN icd10s ic10 ON ic10.id = dg.diag_id AND dg.tab = 1
+        LEFT JOIN icd9s ic9 ON ic9.id = dg.diag_id AND dg.tab = 2
+        LEFT JOIN users u ON u.id = dg.doctor_id
+        WHERE dg.ipd_id = $1 AND dg.deleted_at IS NULL
+        ORDER BY dg.tab ASC, dg.diag_type_id ASC, dg.display_order ASC, dg.id ASC
+      `, [ipdId]),
+      pool.query(`
+        SELECT dgt.id, dgt.tab, dgt.diag_type_id, dgt.diag_text,
+               dt.diag_type_name,
+               TRIM(COALESCE(u.name, '')) AS created_by_name
+        FROM ipd_diag_texts dgt
+        LEFT JOIN diag_types dt ON dt.id = dgt.diag_type_id
+        LEFT JOIN users u ON u.id = dgt.created_by
+        WHERE dgt.ipd_id = $1
+        ORDER BY dgt.tab ASC, dgt.diag_type_id ASC, dgt.id ASC
+      `, [ipdId]),
+      pool.query(`
+        SELECT d.id, dom.order_date, dom.order_time,
+               COALESCE(med.iname, d.order_desc) AS med_name,
+               med.dose, med.qty, med.note,
+               TRIM(COALESCE(uu.usage_unit_name, med.usage_unit_code, '')) AS unit_name,
+               TRIM(COALESCE(duc.human_text, duc.doctor_text, '')) AS usage_text,
+               TRIM(COALESCE(fc.freq_name, fc.freq_for_doctors, '')) AS freq_text
+        FROM doctor_order_masters dom
+        JOIN doctor_orders d ON d.doctor_order_master_id = dom.id AND d.deleted_at IS NULL
+        LEFT JOIN doctor_order_medications med ON med.id = d.ref_id AND med.deleted_at IS NULL
+        LEFT JOIN usage_units uu ON LOWER(TRIM(uu.usage_unit_code)) = LOWER(TRIM(med.usage_unit_code))
+        LEFT JOIN drug_usage_codes duc ON duc.id = med.drug_usage_code_id
+        LEFT JOIN frequency_codes fc ON fc.id = med.frequency_code_id
+        WHERE dom.ipd_id = $1 AND dom.deleted_at IS NULL
+          AND (d.order_type = 'H' OR dom.homemed IS TRUE)
+        ORDER BY dom.order_date DESC, d.id ASC
+      `, [ipdId])
+    ]);
+
+    // 10. Care Team Doctors (ทีมแพทย์)
+    const docTeamRes = await pool.query(`
+      SELECT dl.id, dl.active, dl.ipd_doctor_type_id, dl.incharge_date, dl.incharge_time,
+             dl.finish_date, dl.finish_time, dl.remark,
+             TRIM(COALESCE(o.fullname, '')) AS doctor_name,
+             TRIM(COALESCE(o.licenseno, o.doctor_code, '')) AS licenseno,
+             TRIM(COALESCE(o.doctor_code, '')) AS doctor_code,
+             dt.name AS doctor_type_name,
+             sp.name AS spclty_name,
+             op.name AS position_name
+      FROM ipd_doctor_lists dl
+      LEFT JOIN officers o ON o.id = dl.officer_id
+      LEFT JOIN ipd_doctor_types dt ON dt.id = dl.ipd_doctor_type_id
+      LEFT JOIN spclties sp ON sp.id = o.spclty_id
+      LEFT JOIN officer_positions op ON op.id = o.officer_position_id
+      WHERE dl.ipd_id = $1 AND dl.deleted_at IS NULL
+      ORDER BY
+        CASE WHEN dl.ipd_doctor_type_id = 1 THEN 0 ELSE 1 END ASC,
+        CASE WHEN dl.active IS TRUE THEN 0 ELSE 1 END ASC,
+        dl.incharge_date DESC NULLS LAST,
+        dl.incharge_time DESC NULLS LAST,
+        dl.id DESC
+    `, [ipdId]);
+
+    // 11. Set OR (Operation Orders, OR Cases, OR Returns)
+    const [orCasesRes, orOrdersRes, orReturnsRes] = await Promise.all([
+      pool.query(`
+        SELECT oc.*,
+               ou.name AS or_unit_name, ou.short_name AS or_unit_short
+        FROM mnrh_nurse_or_cases oc
+        LEFT JOIN mnrh_nurse_or_units ou ON ou.id = oc.unit_id
+        WHERE oc.ipd_id = $1 OR TRIM(oc.an) = $2
+        ORDER BY oc.op_date DESC NULLS LAST, oc.op_time DESC NULLS LAST, oc.id DESC
+      `, [ipdId, patient.an]),
+      pool.query(`
+        SELECT d.id AS order_id, dom.order_date, dom.order_time,
+               d.order_desc, d.other, d.order_type, d.off_date, d.off_time,
+               TRIM(COALESCE(o.fullname, u.name, '')) AS doctor_name
+        FROM doctor_order_masters dom
+        JOIN doctor_orders d ON d.doctor_order_master_id = dom.id AND d.deleted_at IS NULL
+        LEFT JOIN users u ON u.id = dom.created_by
+        LEFT JOIN officers o ON o.id = u.officer_id
+        WHERE dom.ipd_id = $1 AND dom.deleted_at IS NULL AND d.doctor_order_type_id = 9
+        ORDER BY dom.order_date DESC, dom.order_time DESC, d.id DESC
+      `, [ipdId]),
+      pool.query(`
+        SELECT r.id, r.return_at, r.note, r.icd9_ids, r.procedure_ids,
+               TRIM(COALESCE(u.name, '')) AS created_by_name
+        FROM mnrh_nurse_or_returns r
+        LEFT JOIN users u ON u.id = r.created_by
+        WHERE r.ipd_id = $1 AND r.deleted_at IS NULL
+        ORDER BY r.return_at DESC NULLS LAST, r.id DESC
+      `, [ipdId])
+    ]);
+
+    // 12. Progress Notes & Order Summary count for EMR overview
+    const progressNotesRes = await pool.query(`
+      SELECT pn.id, pn.progress_date, pn.progress_time, pn.title,
+             pn.s_note, pn.o_note, pn.a_note, pn.p_note,
+             dom.order_date, dom.order_time,
+             TRIM(COALESCE(o.fullname, u.name, '')) AS doctor_name
+      FROM doctor_orders d
+      JOIN doctor_order_masters dom ON dom.id = d.doctor_order_master_id AND dom.deleted_at IS NULL
+      JOIN doctor_progress_notes pn ON pn.id = d.ref_id
+      LEFT JOIN users u ON u.id = dom.created_by
+      LEFT JOIN officers o ON o.id = u.officer_id
+      WHERE dom.ipd_id = $1 AND d.deleted_at IS NULL AND d.doctor_order_type_id = 11
+      ORDER BY dom.order_date DESC, dom.order_time DESC, pn.id DESC
+    `, [ipdId]);
+
+    res.json({
+      patient,
+      allergies: allergyRes.rows,
+      bedMoves: bedMovesRes.rows,
+      vitalsLatest: latestVsRes.rows,
+      vitalsHistory: historyVsRes.rows,
+      clinicalScorings: scoringRes.rows,
+      nurseNotes: nurseNotesRes.rows,
+      nurseSummaries: nurseSummariesRes.rows,
+      labOrders: labOrdersRes.rows,
+      labResults: labResultsRes.rows,
+      xrayOrders: xrayOrdersRes.rows,
+      xrayResults: xrayResultsRes.rows,
+      procedures: ipdProcRes.rows,
+      orderProcedures: orderProcRes.rows,
+      records: recordListsRes.rows,
+      chartDocs: chartDocsRes.rows,
+      assessments: asmsRes.rows,
+      paperScans: paperScansRes.rows,
+      consults: consultsRes.rows,
+      discharges: dchRes.rows,
+      summaries: summaryRes.rows,
+      diagnoses: diagsRes.rows,
+      diagTexts: diagTextsRes.rows,
+      homeMeds: homeMedRes.rows,
+      doctors: docTeamRes.rows,
+      orCases: orCasesRes.rows,
+      orOrders: orOrdersRes.rows,
+      orReturns: orReturnsRes.rows,
+      progressNotes: progressNotesRes.rows
+    });
+  } catch (err) {
+    console.error('Get patient EMR error:', err);
+    res.status(500).json({ error: 'ไม่สามารถดึงข้อมูลเวชระเบียน (EMR) ได้: ' + err.message });
   }
 });
 

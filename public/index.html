@@ -15,7 +15,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.css?v=2" />
+    <link rel="stylesheet" href="/styles.css?v=3" />
   </head>
   <body>
     <div id="app">
@@ -413,6 +413,24 @@
             <div class="detail-nav-right">
               <button
                 type="button"
+                id="orders-goto-emr-btn"
+                class="btn btn-emr btn-sm"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                >
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+                </svg>
+                <span>EMR</span>
+              </button>
+              <button
+                type="button"
                 id="refresh-orders-btn"
                 class="btn btn-outline btn-sm"
               >
@@ -513,9 +531,147 @@
             <!-- Rendered chronologically from newest to oldest -->
           </div>
         </main>
+
+        <!-- ==================== 2C. PATIENT EMR VIEW ==================== -->
+        <main id="patient-emr-view" class="main-container hidden">
+          <!-- Back & Action Bar -->
+          <div class="detail-nav-bar">
+            <button
+              type="button"
+              id="back-from-emr-btn"
+              class="btn btn-secondary"
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+              >
+                <line x1="19" y1="12" x2="5" y2="12" />
+                <polyline points="12 19 5 12 12 5" />
+              </svg>
+              <span id="back-from-emr-label">กลับหน้ารายชื่อผู้ป่วย</span>
+            </button>
+
+            <div class="detail-nav-right">
+              <button
+                type="button"
+                id="emr-goto-orders-btn"
+                class="btn btn-primary btn-sm"
+              >
+                <svg
+                  width="17"
+                  height="17"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                <span>ดู Doctor Order</span>
+              </button>
+              <button
+                type="button"
+                id="refresh-emr-btn"
+                class="btn btn-outline btn-sm"
+              >
+                <svg
+                  width="17"
+                  height="17"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <polyline points="23 4 23 10 17 10" />
+                  <polyline points="1 20 1 14 7 14" />
+                  <path
+                    d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"
+                  />
+                </svg>
+                <span>รีเฟรช</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Patient Banner in EMR View -->
+          <section id="emr-patient-banner" class="patient-banner card-surface">
+            <!-- Populated dynamically -->
+          </section>
+
+          <!-- EMR Navigation Menu Bar (Responsive for Mobile Phone) -->
+          <section class="emr-menu-panel card-surface">
+            <div class="emr-menu-header">
+              <span class="eyebrow">ELECTRONIC MEDICAL RECORD (EMR)</span>
+              <h3 id="emr-active-menu-title">เวชระเบียนผู้ป่วยใน (EMR)</h3>
+            </div>
+
+            <nav
+              id="emr-menu-tabs"
+              class="emr-menu-grid"
+              role="tablist"
+              aria-label="เมนูข้อมูลเวชระเบียน EMR"
+            >
+              <button type="button" class="emr-tab-btn active" data-emr-tab="emr">
+                <span class="emr-tab-label">EMR</span>
+                <span class="emr-tab-count" id="emr-badge-emr">ข้อมูลทั่วไป</span>
+              </button>
+              <button type="button" class="emr-tab-btn" data-emr-tab="vitals">
+                <span class="emr-tab-label">Vital Sign</span>
+                <span class="emr-tab-count" id="emr-badge-vitals">0</span>
+              </button>
+              <button type="button" class="emr-tab-btn" data-emr-tab="nursenote">
+                <span class="emr-tab-label">Nurse Note</span>
+                <span class="emr-tab-count" id="emr-badge-nursenote">0</span>
+              </button>
+              <button type="button" class="emr-tab-btn" data-emr-tab="lab">
+                <span class="emr-tab-label">Lab</span>
+                <span class="emr-tab-count" id="emr-badge-lab">0</span>
+              </button>
+              <button type="button" class="emr-tab-btn" data-emr-tab="xray">
+                <span class="emr-tab-label">X Ray</span>
+                <span class="emr-tab-count" id="emr-badge-xray">0</span>
+              </button>
+              <button type="button" class="emr-tab-btn" data-emr-tab="procedure">
+                <span class="emr-tab-label">procedure</span>
+                <span class="emr-tab-count" id="emr-badge-procedure">0</span>
+              </button>
+              <button type="button" class="emr-tab-btn" data-emr-tab="document">
+                <span class="emr-tab-label">Document</span>
+                <span class="emr-tab-count" id="emr-badge-document">0</span>
+              </button>
+              <button type="button" class="emr-tab-btn" data-emr-tab="discharge">
+                <span class="emr-tab-label">Discharge summary</span>
+                <span class="emr-tab-count" id="emr-badge-discharge">0</span>
+              </button>
+              <button type="button" class="emr-tab-btn" data-emr-tab="doctors">
+                <span class="emr-tab-label">ทีมแพทย์</span>
+                <span class="emr-tab-count" id="emr-badge-doctors">0</span>
+              </button>
+              <button type="button" class="emr-tab-btn" data-emr-tab="setor">
+                <span class="emr-tab-label">Set OR</span>
+                <span class="emr-tab-count" id="emr-badge-setor">0</span>
+              </button>
+            </nav>
+          </section>
+
+          <!-- Loading & Dynamic Content Area for Selected EMR Menu -->
+          <div id="emr-loading" class="loading-box hidden">
+            <div class="spinner"></div>
+            <p>กำลังดึงข้อมูลเวชระเบียน (EMR)...</p>
+          </div>
+
+          <div id="emr-content-container" class="emr-content-container">
+            <!-- Populated dynamically according to active EMR menu -->
+          </div>
+        </main>
       </div>
     </div>
 
-    <script src="/app.js?v=2"></script>
+    <script src="/app.js?v=3"></script>
   </body>
 </html>

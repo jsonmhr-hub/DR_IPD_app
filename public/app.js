@@ -13,6 +13,8 @@
     patientSearchQuery: '',
     patients: [],
     currentPatientData: null, // { patient, allergies, doctors, vitals, orderMasters }
+    currentEmrData: null,
+    activeEmrTab: 'emr',
     orderCategoryFilter: 'all',
     orderSearchQuery: '',
     showAllWardChips: false,
@@ -24,6 +26,7 @@
     mainShell: document.getElementById('main-shell'),
     landingView: document.getElementById('landing-view'),
     patientDetailView: document.getElementById('patient-detail-view'),
+    patientEmrView: document.getElementById('patient-emr-view'),
 
     loginForm: document.getElementById('login-form'),
     loginUsername: document.getElementById('login-username'),
@@ -62,6 +65,7 @@
 
     backToWardBtn: document.getElementById('back-to-ward-btn'),
     backToWardLabel: document.getElementById('back-to-ward-label'),
+    ordersGotoEmrBtn: document.getElementById('orders-goto-emr-btn'),
     refreshOrdersBtn: document.getElementById('refresh-orders-btn'),
     patientBanner: document.getElementById('patient-banner'),
     ordersCountHeading: document.getElementById('orders-count-heading'),
@@ -69,6 +73,16 @@
     orderCategoryTabs: document.getElementById('order-category-tabs'),
     ordersLoading: document.getElementById('orders-loading'),
     ordersTimelineContainer: document.getElementById('orders-timeline-container'),
+
+    backFromEmrBtn: document.getElementById('back-from-emr-btn'),
+    backFromEmrLabel: document.getElementById('back-from-emr-label'),
+    emrGotoOrdersBtn: document.getElementById('emr-goto-orders-btn'),
+    refreshEmrBtn: document.getElementById('refresh-emr-btn'),
+    emrPatientBanner: document.getElementById('emr-patient-banner'),
+    emrActiveMenuTitle: document.getElementById('emr-active-menu-title'),
+    emrMenuTabs: document.getElementById('emr-menu-tabs'),
+    emrLoading: document.getElementById('emr-loading'),
+    emrContentContainer: document.getElementById('emr-content-container'),
   };
 
   // ==================== HELPERS ====================
@@ -284,6 +298,7 @@
 
   function showLandingView() {
     el.patientDetailView.classList.add('hidden');
+    if (el.patientEmrView) el.patientEmrView.classList.add('hidden');
     el.landingView.classList.remove('hidden');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -454,6 +469,15 @@
     }
   }
 
+  function compareBedNo(a, b) {
+    const bedA = String((a && a.bed_no) || '').trim();
+    const bedB = String((b && b.bed_no) || '').trim();
+    if ((!bedA || bedA === '-') && (!bedB || bedB === '-')) return 0;
+    if (!bedA || bedA === '-') return 1;
+    if (!bedB || bedB === '-') return -1;
+    return bedA.localeCompare(bedB, undefined, { numeric: true, sensitivity: 'base' });
+  }
+
   function renderPatientCards() {
     const q = (state.patientSearchQuery || '').trim().toLowerCase();
     const list = state.patients.filter(p => {
@@ -463,9 +487,11 @@
         (p.an && p.an.toLowerCase().includes(q)) ||
         (p.fullname && p.fullname.toLowerCase().includes(q)) ||
         (p.bed_no && p.bed_no.toLowerCase().includes(q)) ||
-        (p.prediag && p.prediag.toLowerCase().includes(q))
+        (p.prediag && p.prediag.toLowerCase().includes(q)) ||
+        (p.incharge_doctor_name && p.incharge_doctor_name.toLowerCase().includes(q)) ||
+        (p.adm_doctor_name && p.adm_doctor_name.toLowerCase().includes(q))
       );
-    });
+    }).sort(compareBedNo);
 
     if (list.length === 0) {
       el.patientListGrid.innerHTML = '';
@@ -598,19 +624,39 @@
               <span class="order-last-date">${escapeHtml(lastOrderText)}</span>
             </div>
 
-            <button type="button" class="btn btn-primary select-patient-btn" data-select-ipd="${pt.ipd_id}">
-              <span>ดู Order</span>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3">
-                <polyline points="9 18 15 12 9 6"/>
-              </svg>
-            </button>
+            <div class="patient-card-actions">
+              <button type="button" class="btn btn-emr select-emr-btn" data-emr-ipd="${pt.ipd_id}">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+                </svg>
+                <span>EMR</span>
+              </button>
+              <button type="button" class="btn btn-primary select-patient-btn" data-select-ipd="${pt.ipd_id}">
+                <span>ดู Order</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3">
+                  <polyline points="9 18 15 12 9 6"/>
+                </svg>
+              </button>
+            </div>
           </div>
         </article>
       `;
     }).join('');
 
+    el.patientListGrid.querySelectorAll('.select-emr-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const ipdId = Number(btn.getAttribute('data-emr-ipd'));
+        if (ipdId) {
+          openPatientEmr(ipdId, 'emr');
+        }
+      });
+    });
+
     el.patientListGrid.querySelectorAll('.patient-card').forEach(card => {
-      card.addEventListener('click', () => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.select-emr-btn')) return;
         const ipdId = Number(card.getAttribute('data-ipd-id'));
         if (ipdId) {
           openPatientDetail(ipdId);
@@ -622,6 +668,7 @@
   // ==================== PATIENT DETAIL & ORDERS VIEW ====================
   async function openPatientDetail(ipdId) {
     el.landingView.classList.add('hidden');
+    if (el.patientEmrView) el.patientEmrView.classList.add('hidden');
     el.patientDetailView.classList.remove('hidden');
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
@@ -663,11 +710,12 @@
     }
   }
 
-  function renderPatientBanner(data) {
+  function renderPatientBanner(data, targetBannerEl) {
+    const bannerEl = targetBannerEl || el.patientBanner;
     const pt = data.patient;
     const allergies = data.allergies || [];
     const doctors = data.doctors || [];
-    const vitals = data.vitals || [];
+    const vitals = data.vitals || data.vitalsLatest || [];
 
     const ageText = calculateAgeText(pt.birthday);
     const los = calculateLosDays(pt.regdate);
@@ -766,7 +814,7 @@
       ? `${primaryDocName}${primaryDocLicense ? ` (${primaryDocLicense})` : ''}`
       : '-';
 
-    el.patientBanner.innerHTML = `
+    bannerEl.innerHTML = `
       <div class="banner-top">
         <div class="banner-name-group">
           <h2>${escapeHtml(pt.fullname)}</h2>
@@ -1171,6 +1219,1163 @@
     }).join('');
   }
 
+  // ==================== PATIENT EMR VIEW & 10 MENUS ====================
+  const EMR_MENU_TITLES = {
+    emr: 'EMR • ข้อมูลทั่วไปและการเข้ารับการรักษา',
+    vitals: 'Vital Sign • สัญญาณชีพและคะแนนประเมิน',
+    nursenote: 'Nurse Note • บันทึกทางการพยาบาล',
+    lab: 'Lab • รายการส่งตรวจและผลตรวจทางห้องปฏิบัติการ',
+    xray: 'X Ray • รายการส่งตรวจและผลทางรังสีวิทยา',
+    procedure: 'Procedure • หัตถการและอุปกรณ์ทางการแพทย์',
+    document: 'Document • เอกสารเวชระเบียน แบบประเมิน และใบปรึกษา',
+    discharge: 'Discharge Summary • สรุปการจำหน่ายผู้ป่วยใน',
+    doctors: 'ทีมแพทย์ • รายชื่อแพทย์ผู้ดูแลรักษา',
+    setor: 'Set OR • ข้อมูลการผ่าตัดและคำสั่ง Pre/Post-Op',
+  };
+
+  async function openPatientEmr(ipdId, initialTab = 'emr') {
+    el.landingView.classList.add('hidden');
+    el.patientDetailView.classList.add('hidden');
+    el.patientEmrView.classList.remove('hidden');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    if (state.selectedWard) {
+      el.backFromEmrLabel.textContent = `กลับหอผู้ป่วย (${state.selectedWard.name})`;
+    } else {
+      el.backFromEmrLabel.textContent = 'กลับหน้ารายชื่อผู้ป่วย';
+    }
+
+    state.activeEmrTab = initialTab || 'emr';
+    updateActiveEmrTabUi();
+
+    await fetchAndRenderPatientEmr(ipdId);
+  }
+
+  function updateActiveEmrTabUi() {
+    if (!el.emrMenuTabs) return;
+    el.emrMenuTabs.querySelectorAll('.emr-tab-btn').forEach(btn => {
+      const tabKey = btn.getAttribute('data-emr-tab');
+      btn.classList.toggle('active', tabKey === state.activeEmrTab);
+    });
+    if (el.emrActiveMenuTitle) {
+      el.emrActiveMenuTitle.textContent = EMR_MENU_TITLES[state.activeEmrTab] || 'เวชระเบียนผู้ป่วยใน (EMR)';
+    }
+  }
+
+  async function fetchAndRenderPatientEmr(ipdId) {
+    el.emrLoading.classList.remove('hidden');
+    el.emrContentContainer.innerHTML = '';
+    el.emrPatientBanner.innerHTML = `<div style="color: var(--text-muted);">กำลังโหลดข้อมูลผู้ป่วย...</div>`;
+
+    try {
+      const data = await apiFetch(`/api/patients/${ipdId}/emr`);
+      state.currentEmrData = data;
+      renderPatientBanner(data, el.emrPatientBanner);
+      updateEmrTabBadges(data);
+      renderActiveEmrTabContent();
+    } catch (err) {
+      el.emrContentContainer.innerHTML = `
+        <div class="empty-box">
+          <h4>ไม่สามารถดึงข้อมูลเวชระเบียน (EMR) ได้</h4>
+          <p>${escapeHtml(err.message)}</p>
+        </div>
+      `;
+    } finally {
+      el.emrLoading.classList.add('hidden');
+    }
+  }
+
+  function updateEmrTabBadges(data) {
+    const setBadge = (id, val) => {
+      const node = document.getElementById(id);
+      if (node) node.textContent = String(val);
+    };
+
+    // Group vitals by date+time slot for count
+    const vsSlots = groupVitalsBySlot(data.vitalsHistory || []);
+    setBadge('emr-badge-emr', 'สรุป');
+    setBadge('emr-badge-vitals', vsSlots.length + (data.clinicalScorings || []).length);
+    setBadge('emr-badge-nursenote', (data.nurseNotes || []).length + (data.nurseSummaries || []).length);
+    setBadge('emr-badge-lab', (data.labOrders || []).length + (data.labResults || []).length);
+    setBadge('emr-badge-xray', (data.xrayOrders || []).length + (data.xrayResults || []).length);
+    setBadge('emr-badge-procedure', (data.procedures || []).length + (data.orderProcedures || []).length + (data.records || []).length);
+    setBadge('emr-badge-document', (data.chartDocs || []).length + (data.assessments || []).length + (data.consults || []).length + (data.paperScans || []).length);
+    setBadge('emr-badge-discharge', (data.discharges || []).length + (data.summaries || []).length + (data.diagnoses || []).length);
+    setBadge('emr-badge-doctors', (data.doctors || []).length || 1);
+    setBadge('emr-badge-setor', (data.orCases || []).length + (data.orOrders || []).length + (data.orReturns || []).length);
+  }
+
+  function groupVitalsBySlot(historyRows) {
+    const map = new Map();
+    for (const r of historyRows) {
+      const dateStr = formatThaiDate(r.vitalsign_date);
+      const timeStr = r.vtime
+        ? formatTimeShort(r.vtime)
+        : (r.slot_id !== null && r.slot_id !== undefined ? `${String(r.slot_id).padStart(2, '0')}:00 น.` : '-');
+      const key = `${r.vitalsign_date || ''}_${timeStr}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          dateVal: r.vitalsign_date,
+          dateText: dateStr,
+          timeText: timeStr,
+          shiftName: r.nurse_shift_name || '',
+          items: {}
+        });
+      }
+      const group = map.get(key);
+      const itemId = Number(r.vitalsign_item_id);
+      if (group.items[itemId] === undefined) {
+        group.items[itemId] = r.value;
+      }
+    }
+    return Array.from(map.values());
+  }
+
+  function renderActiveEmrTabContent() {
+    if (!state.currentEmrData) return;
+    const d = state.currentEmrData;
+    const tab = state.activeEmrTab;
+
+    switch (tab) {
+      case 'emr':
+        el.emrContentContainer.innerHTML = renderEmrOverviewTab(d);
+        break;
+      case 'vitals':
+        el.emrContentContainer.innerHTML = renderEmrVitalsTab(d);
+        break;
+      case 'nursenote':
+        el.emrContentContainer.innerHTML = renderEmrNurseNoteTab(d);
+        break;
+      case 'lab':
+        el.emrContentContainer.innerHTML = renderEmrLabTab(d);
+        break;
+      case 'xray':
+        el.emrContentContainer.innerHTML = renderEmrXrayTab(d);
+        break;
+      case 'procedure':
+        el.emrContentContainer.innerHTML = renderEmrProcedureTab(d);
+        break;
+      case 'document':
+        el.emrContentContainer.innerHTML = renderEmrDocumentTab(d);
+        break;
+      case 'discharge':
+        el.emrContentContainer.innerHTML = renderEmrDischargeTab(d);
+        break;
+      case 'doctors':
+        el.emrContentContainer.innerHTML = renderEmrDoctorsTab(d);
+        break;
+      case 'setor':
+        el.emrContentContainer.innerHTML = renderEmrSetOrTab(d);
+        break;
+      default:
+        el.emrContentContainer.innerHTML = renderEmrOverviewTab(d);
+    }
+
+    // Bind quick tab jump buttons inside overview
+    el.emrContentContainer.querySelectorAll('[data-jump-emr-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetTab = btn.getAttribute('data-jump-emr-tab');
+        if (targetTab) {
+          state.activeEmrTab = targetTab;
+          updateActiveEmrTabUi();
+          renderActiveEmrTabContent();
+          window.scrollTo({ top: el.emrMenuTabs.offsetTop - 70, behavior: 'smooth' });
+        }
+      });
+    });
+  }
+
+  // 1. EMR Overview Tab
+  function renderEmrOverviewTab(d) {
+    const pt = d.patient || {};
+    const los = calculateLosDays(pt.regdate);
+    const bedMoves = d.bedMoves || [];
+    const progressNotes = d.progressNotes || [];
+    const chartDocs = d.chartDocs || [];
+    const diags = d.diagnoses || [];
+
+    const sexText = pt.sex === '1' || pt.sex === 'M' || pt.sex === 'ชาย'
+      ? 'ชาย'
+      : (pt.sex === '2' || pt.sex === 'F' || pt.sex === 'หญิง' ? 'หญิง' : (pt.sex || '-'));
+    const bloodText = [pt.blood_group_name, pt.blood_rh_name].filter(Boolean).join(' ') || '-';
+
+    return `
+      <div class="emr-sections-stack">
+        <!-- Quick Summary Metrics Grid -->
+        <div class="emr-stat-cards-grid">
+          <button type="button" class="emr-stat-card" data-jump-emr-tab="vitals">
+            <span class="esc-label">Vital Sign</span>
+            <strong class="esc-val">${groupVitalsBySlot(d.vitalsHistory || []).length} ครั้ง</strong>
+            <span class="esc-sub">ดูตารางสัญญาณชีพ →</span>
+          </button>
+          <button type="button" class="emr-stat-card" data-jump-emr-tab="nursenote">
+            <span class="esc-label">Nurse Note</span>
+            <strong class="esc-val">${(d.nurseNotes || []).length} รายการ</strong>
+            <span class="esc-sub">บันทึกทางการพยาบาล →</span>
+          </button>
+          <button type="button" class="emr-stat-card" data-jump-emr-tab="lab">
+            <span class="esc-label">Lab</span>
+            <strong class="esc-val">${(d.labOrders || []).length} รายการ</strong>
+            <span class="esc-sub">รายการส่งตรวจ Lab →</span>
+          </button>
+          <button type="button" class="emr-stat-card" data-jump-emr-tab="xray">
+            <span class="esc-label">X Ray</span>
+            <strong class="esc-val">${(d.xrayOrders || []).length} รายการ</strong>
+            <span class="esc-sub">รายการรังสีวิทยา →</span>
+          </button>
+        </div>
+
+        <!-- Admission & Demographics Card -->
+        <section class="emr-card card-surface">
+          <h4 class="emr-card-title">ข้อมูลการรับไว้ในโรงพยาบาล (Admission &amp; Clinical Summary)</h4>
+          <div class="emr-info-grid">
+            <div class="emr-info-item">
+              <span class="ei-label">ชื่อ-สกุลผู้ป่วย</span>
+              <span class="ei-val">${escapeHtml(pt.fullname || '-')}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">HN / AN / VN</span>
+              <span class="ei-val">HN ${escapeHtml(pt.hn || '-')} • AN ${escapeHtml(pt.an || '-')} ${pt.vn ? `(VN ${escapeHtml(pt.vn)})` : ''}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">วันเกิด / อายุ / เพศ</span>
+              <span class="ei-val">${escapeHtml(formatThaiDate(pt.birthday))} (${escapeHtml(calculateAgeText(pt.birthday))}) • เพศ: ${escapeHtml(sexText)}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">หมู่เลือด / เบอร์โทรศัพท์</span>
+              <span class="ei-val">หมู่เลือด: ${escapeHtml(bloodText)} • โทร: ${escapeHtml(pt.mobile_phone_number || '-')}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">วันที่ Admit / ระยะเวลานอน</span>
+              <span class="ei-val">${escapeHtml(formatThaiDate(pt.regdate))} ${escapeHtml(formatTimeShort(pt.regtime))} ${los ? `(${los} วัน)` : ''}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">ประเภทการรับ / ความรุนแรง</span>
+              <span class="ei-val">${escapeHtml(pt.admit_type_name || '-')} • ระดับ: ${escapeHtml(pt.severe_name || '-')}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">การวินิจฉัยแรกรับ (Pre-Diagnosis)</span>
+              <span class="ei-val">${escapeHtml(pt.prediag || '-')}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">Provisional Dx / Admit For</span>
+              <span class="ei-val">${escapeHtml([pt.provision_dx, pt.admit_for].filter(Boolean).join(' • ') || '-')}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">โรคประจำตัว (PMH)</span>
+              <span class="ei-val">${escapeHtml(pt.pmh || '-')}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">แพทย์ผู้สั่งรับ Admit</span>
+              <span class="ei-val">${escapeHtml(pt.admitting_doctor_name || pt.adm_doctor_name || '-')}${pt.admitting_doctor_license ? ` (${escapeHtml(pt.admitting_doctor_license)})` : ''}</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Progress Notes (SOAP) -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">บันทึกความก้าวหน้าการรักษาของแพทย์ (Doctor Progress Notes)</h4>
+            <span class="badge-pill badge-order-pt">${progressNotes.length} รายการ</span>
+          </div>
+          ${progressNotes.length > 0 ? `
+            <div class="emr-list-stack">
+              ${progressNotes.map(pn => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <div>
+                      <strong>${escapeHtml(pn.title || 'Progress Note')}</strong>
+                      <span class="emr-meta-pill">${escapeHtml(formatThaiDate(pn.order_date || pn.progress_date))} ${escapeHtml(formatTimeShort(pn.progress_time || pn.order_time))}</span>
+                    </div>
+                    <span class="emr-doc-tag">${escapeHtml(pn.doctor_name || '-')}</span>
+                  </div>
+                  <div class="soap-grid" style="margin-top: 8px;">
+                    ${pn.s_note ? `<div class="soap-row"><span class="soap-badge">S</span><div class="soap-text">${escapeHtml(pn.s_note)}</div></div>` : ''}
+                    ${pn.o_note ? `<div class="soap-row"><span class="soap-badge">O</span><div class="soap-text">${escapeHtml(pn.o_note)}</div></div>` : ''}
+                    ${pn.a_note ? `<div class="soap-row"><span class="soap-badge">A</span><div class="soap-text">${escapeHtml(pn.a_note)}</div></div>` : ''}
+                    ${pn.p_note ? `<div class="soap-row"><span class="soap-badge">P</span><div class="soap-text">${escapeHtml(pn.p_note)}</div></div>` : ''}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีบันทึก Progress Note</div>`}
+        </section>
+
+        <!-- Bed Moves History -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">ประวัติการย้ายหอผู้ป่วย / เตียง (Bed Move History)</h4>
+            <span class="badge-pill badge-muted">${bedMoves.length} รายการ</span>
+          </div>
+          ${bedMoves.length > 0 ? `
+            <div class="emr-table-responsive">
+              <table class="emr-table">
+                <thead>
+                  <tr>
+                    <th>วันที่ - เวลา</th>
+                    <th>ประเภท</th>
+                    <th>หอผู้ป่วย</th>
+                    <th>เตียง / ห้อง</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${bedMoves.map((bm, idx) => `
+                    <tr>
+                      <td>${escapeHtml(formatThaiDate(bm.movedate))} ${escapeHtml(formatTimeShort(bm.movetime))} ${idx === 0 ? `<span class="badge-pill badge-active-pt">ปัจจุบัน</span>` : ''}</td>
+                      <td>${escapeHtml(bm.move_type_name || '-')}</td>
+                      <td><strong>${escapeHtml(bm.ward_name || '-')}</strong></td>
+                      <td>เตียง ${escapeHtml(bm.bed_no || '-')} ${bm.room_name ? `(${escapeHtml(bm.room_name)})` : ''}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีประวัติการย้ายเตียง</div>`}
+        </section>
+      </div>
+    `;
+  }
+
+  // 2. Vital Sign Tab
+  function renderEmrVitalsTab(d) {
+    const slots = groupVitalsBySlot(d.vitalsHistory || []);
+    const scorings = d.clinicalScorings || [];
+
+    return `
+      <div class="emr-sections-stack">
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">ตารางบันทึกสัญญาณชีพย้อนหลัง (Vital Signs Flowsheet)</h4>
+            <span class="badge-pill badge-order-pt">${slots.length} ช่วงเวลา</span>
+          </div>
+          ${slots.length > 0 ? `
+            <div class="emr-table-responsive">
+              <table class="emr-table vitals-flow-table">
+                <thead>
+                  <tr>
+                    <th>วันที่ / เวลา</th>
+                    <th>เวร</th>
+                    <th>Temp (°C)</th>
+                    <th>Pulse (/min)</th>
+                    <th>RR (/min)</th>
+                    <th>BP (mmHg)</th>
+                    <th>SpO2 (%)</th>
+                    <th>Pain</th>
+                    <th>BW / Ht</th>
+                    <th>Intake / Output</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${slots.map(s => {
+                    const it = s.items;
+                    const bp = (it[4] || it[5]) ? `${it[4] || '-'}/${it[5] || '-'}` : '-';
+                    const bwHt = (it[8] || it[9]) ? `${it[8] ? `${it[8]} kg` : '-'}${it[9] ? ` / ${it[9]} cm` : ''}` : '-';
+                    const ioParts = [];
+                    if (it[11]) ioParts.push(`Oral: ${it[11]}`);
+                    if (it[12]) ioParts.push(`IV: ${it[12]}`);
+                    if (it[14]) ioParts.push(`Urine: ${it[14]}`);
+                    return `
+                      <tr>
+                        <td><strong>${escapeHtml(s.dateText)}</strong><br><span class="text-muted-sm">${escapeHtml(s.timeText)}</span></td>
+                        <td>${escapeHtml(s.shiftName || '-')}</td>
+                        <td><strong class="${Number(it[1]) >= 37.8 ? 'text-danger' : ''}">${escapeHtml(it[1] || '-')}</strong></td>
+                        <td><strong>${escapeHtml(it[2] || '-')}</strong></td>
+                        <td><strong>${escapeHtml(it[3] || '-')}</strong></td>
+                        <td><strong>${escapeHtml(bp)}</strong></td>
+                        <td><strong>${escapeHtml(it[7] ? `${it[7]}%` : '-')}</strong></td>
+                        <td>${escapeHtml(it[6] ?? '-')}</td>
+                        <td>${escapeHtml(bwHt)}</td>
+                        <td>${escapeHtml(ioParts.join(', ') || '-')}</td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : `<div class="emr-empty-inline">ยังไม่มีประวัติการบันทึกสัญญาณชีพ</div>`}
+        </section>
+
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">ผลประเมินคะแนนทางคลินิก (MEWS / Clinical Scoring)</h4>
+            <span class="badge-pill badge-muted">${scorings.length} รายการ</span>
+          </div>
+          ${scorings.length > 0 ? `
+            <div class="emr-list-stack">
+              ${scorings.map(sc => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <div>
+                      <strong>${escapeHtml(sc.short_name || sc.scoring_name || 'Clinical Score')}</strong>
+                      <span class="emr-meta-pill">คะแนน: <strong>${escapeHtml(sc.score ?? '-')}</strong> ${sc.result_name ? `(${escapeHtml(sc.result_name)})` : ''}</span>
+                    </div>
+                    <span class="text-muted-sm">${escapeHtml(formatThaiDate(sc.score_date || sc.nurse_shift_date))} ${escapeHtml(formatTimeShort(sc.score_time))} ${sc.nurse_shift_name ? `• เวร${escapeHtml(sc.nurse_shift_name)}` : ''}</span>
+                  </div>
+                  ${sc.note ? `<div class="oi-subtext">หมายเหตุ: ${escapeHtml(sc.note)}</div>` : ''}
+                  ${sc.created_by_name ? `<div class="text-muted-sm" style="margin-top:4px;">ผู้บันทึก: ${escapeHtml(sc.created_by_name)}</div>` : ''}
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ยังไม่มีข้อมูลคะแนนประเมินทางคลินิก</div>`}
+        </section>
+      </div>
+    `;
+  }
+
+  // 3. Nurse Note Tab
+  function renderEmrNurseNoteTab(d) {
+    const notes = d.nurseNotes || [];
+    const summaries = d.nurseSummaries || [];
+
+    return `
+      <div class="emr-sections-stack">
+        ${summaries.length > 0 ? `
+          <section class="emr-card card-surface">
+            <div class="emr-card-head">
+              <h4 class="emr-card-title">บันทึกสรุปทางการพยาบาล / แรกรับ (Nurse Summaries)</h4>
+              <span class="badge-pill badge-order-pt">${summaries.length} รายการ</span>
+            </div>
+            <div class="emr-list-stack">
+              ${summaries.map(s => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <strong>วันที่ ${escapeHtml(formatThaiDate(s.note_at))}</strong>
+                    <span class="emr-doc-tag">พว. ${escapeHtml(s.nurse_name || '-')}</span>
+                  </div>
+                  <div class="oi-subtext" style="margin-top:6px;">${escapeHtml(s.body || '-')}</div>
+                </div>
+              `).join('')}
+            </div>
+          </section>
+        ` : ''}
+
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">บันทึกทางการพยาบาล (Nursing Diagnosis, Intervention &amp; Evaluation)</h4>
+            <span class="badge-pill badge-order-pt">${notes.length} รายการ</span>
+          </div>
+          ${notes.length > 0 ? `
+            <div class="emr-list-stack">
+              ${notes.map(nn => {
+                const asses = Array.isArray(nn.assessments) ? nn.assessments.filter(a => a && (a.asses_name || a.asses_value)) : [];
+                const inters = Array.isArray(nn.interventions) ? nn.interventions.filter(i => i && (i.inter_name || i.inter_value)) : [];
+                const sdiags = Array.isArray(nn.sub_diags) ? nn.sub_diags.filter(s => s && s.sdiag_name) : [];
+
+                return `
+                  <article class="emr-item-card nurse-note-card">
+                    <div class="emr-item-header">
+                      <div>
+                        <span class="badge-pill badge-order-pt">วันที่ ${escapeHtml(formatThaiDate(nn.diag_date))} ${escapeHtml(formatTimeShort(nn.diag_time))}</span>
+                        ${nn.nurse_shift_name ? `<span class="badge-pill badge-muted">เวร${escapeHtml(nn.nurse_shift_name)}</span>` : ''}
+                        ${nn.eva_status_name ? `<span class="badge-pill badge-active-pt">${escapeHtml(nn.eva_status_name)}</span>` : ''}
+                      </div>
+                      <span class="emr-doc-tag">${escapeHtml(nn.nurse_name || 'พยาบาล')}</span>
+                    </div>
+
+                    <h5 class="nn-diag-title">${escapeHtml(nn.diag_name || nn.note_type_desc || 'บันทึกทางการพยาบาล')}</h5>
+                    ${nn.goal ? `<div class="nn-goal"><strong>เป้าหมาย:</strong> ${escapeHtml(nn.goal)}</div>` : ''}
+
+                    ${sdiags.length > 0 ? `
+                      <div class="nn-block">
+                        <span class="nn-block-label">ปัญหา/สาเหตุร่วม:</span>
+                        <div class="nn-tags-row">
+                          ${sdiags.map(s => `<span class="vital-chip">${escapeHtml(s.sdiag_name)}</span>`).join('')}
+                        </div>
+                      </div>
+                    ` : ''}
+
+                    ${asses.length > 0 ? `
+                      <div class="nn-block">
+                        <span class="nn-block-label">ข้อมูลสนับสนุน / การประเมิน (Assessment):</span>
+                        <ul class="nn-list">
+                          ${asses.map(a => `<li>${escapeHtml(a.asses_name || '')} ${a.asses_value ? `: <strong>${escapeHtml(a.asses_value)}</strong>` : ''} ${escapeHtml(a.unit || '')}</li>`).join('')}
+                        </ul>
+                      </div>
+                    ` : ''}
+
+                    ${inters.length > 0 ? `
+                      <div class="nn-block">
+                        <span class="nn-block-label">กิจกรรมการพยาบาล (Intervention):</span>
+                        <ul class="nn-list">
+                          ${inters.map(i => `<li>${escapeHtml(i.inter_name || '')} ${i.inter_value ? `: <strong>${escapeHtml(i.inter_value)}</strong>` : ''} ${escapeHtml(i.unit || '')}</li>`).join('')}
+                        </ul>
+                      </div>
+                    ` : ''}
+
+                    ${nn.narrative_body ? `
+                      <div class="nn-block">
+                        <span class="nn-block-label">บันทึกบรรยาย (Narrative):</span>
+                        <div class="oi-subtext">${escapeHtml(nn.narrative_body)}</div>
+                      </div>
+                    ` : ''}
+
+                    ${nn.lab_text ? `
+                      <div class="nn-block">
+                        <span class="nn-block-label">ผล Lab ที่เกี่ยวข้อง:</span>
+                        <div class="oi-subtext">${escapeHtml(nn.lab_text)}</div>
+                      </div>
+                    ` : ''}
+
+                    ${nn.eva_result ? `
+                      <div class="nn-block nn-eval-box">
+                        <span class="nn-block-label">การประเมินผล (Evaluation):</span>
+                        <div class="oi-subtext">${escapeHtml(nn.eva_result)}</div>
+                      </div>
+                    ` : ''}
+                  </article>
+                `;
+              }).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ยังไม่มีบันทึกทางการพยาบาล (Nurse Note)</div>`}
+        </section>
+      </div>
+    `;
+  }
+
+  // 4. Lab Tab
+  function renderEmrLabTab(d) {
+    const orders = d.labOrders || [];
+    const results = d.labResults || [];
+    const nurseLabs = (d.nurseNotes || []).filter(n => n.lab_text);
+
+    return `
+      <div class="emr-sections-stack">
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">รายการสั่งตรวจทางห้องปฏิบัติการ (Lab Orders)</h4>
+            <span class="badge-pill badge-order-pt">${orders.length} รายการ</span>
+          </div>
+          ${orders.length > 0 ? `
+            <div class="emr-table-responsive">
+              <table class="emr-table">
+                <thead>
+                  <tr>
+                    <th>วันที่-เวลาสั่ง</th>
+                    <th>รายการตรวจ Lab</th>
+                    <th>ประเภท</th>
+                    <th>แพทย์ผู้สั่ง</th>
+                    <th>หมายเหตุ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${orders.map(o => `
+                    <tr>
+                      <td><strong>${escapeHtml(formatThaiDate(o.order_date))}</strong> ${escapeHtml(formatTimeShort(o.order_time))}</td>
+                      <td><strong>${escapeHtml(o.lab_name || '-')}</strong> ${o.is_tmr ? `<span class="badge-pill badge-order-pt">ส่งตรวจพรุ่งนี้</span>` : ''}</td>
+                      <td>${o.order_type === 'D' ? 'One Day' : (o.order_type === 'C' ? 'Continue' : escapeHtml(o.order_type || '-'))}</td>
+                      <td>${escapeHtml(o.doctor_name || '-')}</td>
+                      <td>${escapeHtml(o.other || '-')}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีรายการสั่งตรวจทางห้องปฏิบัติการ (Lab)</div>`}
+        </section>
+
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">ผลตรวจทางห้องปฏิบัติการ (Lab Results)</h4>
+            <span class="badge-pill badge-muted">${results.length + nurseLabs.length} รายการ</span>
+          </div>
+          ${results.length > 0 ? `
+            <div class="emr-table-responsive">
+              <table class="emr-table">
+                <thead>
+                  <tr>
+                    <th>วันที่-เวลา</th>
+                    <th>รายการ</th>
+                    <th>ผลตรวจ</th>
+                    <th>หน่วย</th>
+                    <th>ค่าปกติ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${results.map(r => `
+                    <tr>
+                      <td>${escapeHtml(formatThaiDate(r.result_date))} ${escapeHtml(formatTimeShort(r.result_time))}</td>
+                      <td><strong>${escapeHtml(r.lab_name || '-')}</strong></td>
+                      <td><strong class="${r.abnormal ? 'text-danger' : ''}">${escapeHtml(r.lab_result || '-')}</strong></td>
+                      <td>${escapeHtml(r.lab_items_unit || '-')}</td>
+                      <td>${escapeHtml(r.lab_items_normal_value || '-')}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : nurseLabs.length > 0 ? `
+            <div class="emr-list-stack">
+              ${nurseLabs.map(nl => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <strong>วันที่ ${escapeHtml(formatThaiDate(nl.diag_date))} ${escapeHtml(formatTimeShort(nl.diag_time))}</strong>
+                    <span class="emr-doc-tag">${escapeHtml(nl.nurse_name || '-')}</span>
+                  </div>
+                  <div class="oi-subtext">${escapeHtml(nl.lab_text)}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ยังไม่มีผลตรวจทางห้องปฏิบัติการที่ซิงค์ในระบบ</div>`}
+        </section>
+      </div>
+    `;
+  }
+
+  // 5. X-Ray Tab
+  function renderEmrXrayTab(d) {
+    const orders = d.xrayOrders || [];
+    const results = d.xrayResults || [];
+
+    return `
+      <div class="emr-sections-stack">
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">รายการสั่งตรวจทางรังสีวิทยา (X-Ray / Imaging Orders)</h4>
+            <span class="badge-pill badge-order-pt">${orders.length} รายการ</span>
+          </div>
+          ${orders.length > 0 ? `
+            <div class="emr-list-stack">
+              ${orders.map(x => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <div>
+                      <strong>${escapeHtml(x.xray_name || 'X-Ray Order')}</strong>
+                      ${x.priority_name ? `<span class="badge-pill badge-order-pt">${escapeHtml(x.priority_name)}</span>` : ''}
+                      ${x.xn ? `<span class="badge-pill badge-muted">XN: ${escapeHtml(x.xn)}</span>` : ''}
+                    </div>
+                    <span class="text-muted-sm">${escapeHtml(formatThaiDate(x.order_date))} ${escapeHtml(formatTimeShort(x.order_time))}</span>
+                  </div>
+                  ${x.clinical_diag ? `<div class="oi-subtext"><strong>Clinical Dx:</strong> ${escapeHtml(x.clinical_diag)}</div>` : ''}
+                  ${x.clinical_info || x.other ? `<div class="oi-subtext"><strong>รายละเอียด/อาการ:</strong> ${escapeHtml(x.clinical_info || x.other)}</div>` : ''}
+                  <div class="text-muted-sm" style="margin-top:4px;">แพทย์ผู้สั่ง: ${escapeHtml(x.doctor_name || '-')}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีรายการสั่งตรวจ X-Ray</div>`}
+        </section>
+
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">ผลอ่านทางรังสีวิทยา (Radiology Reports)</h4>
+            <span class="badge-pill badge-muted">${results.length} รายการ</span>
+          </div>
+          ${results.length > 0 ? `
+            <div class="emr-list-stack">
+              ${results.map(r => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <strong>XN: ${escapeHtml(r.xn || '-')}</strong>
+                    <span class="text-muted-sm">วันที่อ่านผล: ${escapeHtml(formatThaiDate(r.report_date || r.request_date))} ${escapeHtml(formatTimeShort(r.report_time || r.request_time))}</span>
+                  </div>
+                  <div class="oi-subtext">${escapeHtml(r.report_text || r.clinical_information || '-')}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ยังไม่มีผลอ่านทางรังสีวิทยาในระบบ</div>`}
+        </section>
+      </div>
+    `;
+  }
+
+  // 6. Procedure Tab
+  function renderEmrProcedureTab(d) {
+    const procs = d.procedures || [];
+    const ordProcs = d.orderProcedures || [];
+    const records = d.records || [];
+
+    return `
+      <div class="emr-sections-stack">
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">หัตถการผู้ป่วยใน (IPD Procedures / ICD-9-CM)</h4>
+            <span class="badge-pill badge-order-pt">${procs.length} รายการ</span>
+          </div>
+          ${procs.length > 0 ? `
+            <div class="emr-list-stack">
+              ${procs.map(p => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <div>
+                      ${p.icd9cm || p.icd9_code ? `<span class="hn-pill" style="margin-right:6px;">ICD9: ${escapeHtml(p.icd9cm || p.icd9_code)}</span>` : ''}
+                      <strong>${escapeHtml(p.print_text || p.search_text || p.note || 'หัตถการ')}</strong>
+                    </div>
+                    <span class="text-muted-sm">${escapeHtml(formatThaiDate(p.pdate))} ${escapeHtml(formatTimeShort(p.ptime))}</span>
+                  </div>
+                  ${p.note ? `<div class="oi-subtext">หมายเหตุ: ${escapeHtml(p.note)}</div>` : ''}
+                  <div class="text-muted-sm" style="margin-top:4px;">ผู้บันทึก: ${escapeHtml(p.created_by_name || '-')} ${p.spclty_name ? `• แผนก ${escapeHtml(p.spclty_name)}` : ''}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีรายการหัตถการ ICD-9-CM</div>`}
+        </section>
+
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">คำสั่งทำหัตถการจากแพทย์ (Doctor Order Procedures)</h4>
+            <span class="badge-pill badge-muted">${ordProcs.length} รายการ</span>
+          </div>
+          ${ordProcs.length > 0 ? `
+            <div class="emr-list-stack">
+              ${ordProcs.map(op => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <strong>${escapeHtml(op.order_desc || op.note || 'คำสั่งหัตถการ')}</strong>
+                    <span class="text-muted-sm">${escapeHtml(formatThaiDate(op.order_date))} ${escapeHtml(formatTimeShort(op.order_time))}</span>
+                  </div>
+                  ${op.other || op.note ? `<div class="oi-subtext">${escapeHtml([op.other, op.note].filter(Boolean).join(' • '))}</div>` : ''}
+                  <div class="text-muted-sm" style="margin-top:4px;">ผู้บันทึก: ${escapeHtml(op.created_by_name || '-')}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีคำสั่งทำหัตถการเพิ่มเติม</div>`}
+        </section>
+
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">บันทึกการใช้อุปกรณ์ / สายสวน / หัตถการพยาบาล (Invasive Devices &amp; Records)</h4>
+            <span class="badge-pill badge-muted">${records.length} รายการ</span>
+          </div>
+          ${records.length > 0 ? `
+            <div class="emr-table-responsive">
+              <table class="emr-table">
+                <thead>
+                  <tr>
+                    <th>อุปกรณ์ / หัตถการ</th>
+                    <th>วันเริ่ม (Start)</th>
+                    <th>วันสิ้นสุด (End)</th>
+                    <th>หมายเหตุ</th>
+                    <th>ผู้บันทึก</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${records.map(r => `
+                    <tr>
+                      <td><strong>${escapeHtml(r.record_name || '-')}</strong></td>
+                      <td>${escapeHtml(formatThaiDate(r.started_at))}</td>
+                      <td>${r.ended_at ? escapeHtml(formatThaiDate(r.ended_at)) : `<span class="badge-pill badge-active-pt">กำลังใช้งาน</span>`}</td>
+                      <td>${escapeHtml(r.remark || '-')}</td>
+                      <td>${escapeHtml(r.created_by_name || '-')}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีบันทึกอุปกรณ์หรือสายสวน</div>`}
+        </section>
+      </div>
+    `;
+  }
+
+  // 7. Document Tab
+  function renderEmrDocumentTab(d) {
+    const chartDocs = d.chartDocs || [];
+    const asms = d.assessments || [];
+    const consults = d.consults || [];
+    const scans = d.paperScans || [];
+
+    return `
+      <div class="emr-sections-stack">
+        <!-- Chart Docs -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">เอกสารซักประวัติและตรวจร่างกายแรกรับ (Medical Chart Documents)</h4>
+            <span class="badge-pill badge-order-pt">${chartDocs.length} รายการ</span>
+          </div>
+          ${chartDocs.length > 0 ? `
+            <div class="emr-list-stack">
+              ${chartDocs.map(cd => {
+                const payload = cd.data && typeof cd.data === 'object' ? cd.data : {};
+                const entries = Object.entries(payload).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '');
+                return `
+                  <div class="emr-item-card">
+                    <div class="emr-item-header">
+                      <strong>เอกสาร: ${escapeHtml(String(cd.doc_key || 'Chart Document').toUpperCase())}</strong>
+                      <span class="text-muted-sm">${escapeHtml(formatThaiDate(cd.doc_date))} ${escapeHtml(formatTimeShort(cd.doc_time))} • ${escapeHtml(cd.created_by_name || '-')}</span>
+                    </div>
+                    ${entries.length > 0 ? `
+                      <div class="emr-info-grid" style="margin-top:8px;">
+                        ${entries.map(([k, v]) => `
+                          <div class="emr-info-item">
+                            <span class="ei-label">${escapeHtml(k.toUpperCase())}</span>
+                            <span class="ei-val">${escapeHtml(typeof v === 'object' ? JSON.stringify(v) : String(v))}</span>
+                          </div>
+                        `).join('')}
+                      </div>
+                    ` : ''}
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีเอกสาร Chart Document</div>`}
+        </section>
+
+        <!-- Assessments (ipd_asms) -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">แบบประเมินผู้ป่วยใน (Admission &amp; Nursing Assessments)</h4>
+            <span class="badge-pill badge-order-pt">${asms.length} ฉบับ</span>
+          </div>
+          ${asms.length > 0 ? `
+            <div class="emr-list-stack">
+              ${asms.map(a => {
+                const details = Array.isArray(a.details) ? a.details.filter(x => x && (x.label || x.value)) : [];
+                return `
+                  <div class="emr-item-card">
+                    <div class="emr-item-header">
+                      <div>
+                        <strong>${escapeHtml(a.asm_name || 'แบบประเมินผู้ป่วย')}</strong>
+                        ${a.nurse_shift_name ? `<span class="badge-pill badge-muted">เวร${escapeHtml(a.nurse_shift_name)}</span>` : ''}
+                      </div>
+                      <span class="text-muted-sm">${escapeHtml(formatThaiDate(a.asm_date))} ${escapeHtml(formatTimeShort(a.asm_time))} • ${escapeHtml(a.created_by_name || '-')}</span>
+                    </div>
+                    ${a.note ? `<div class="oi-subtext">หมายเหตุ: ${escapeHtml(a.note)}</div>` : ''}
+                    ${details.length > 0 ? `
+                      <div class="asm-details-grid">
+                        ${details.slice(0, 24).map(dt => `
+                          <div class="asm-detail-chip">
+                            <span class="adc-label">${escapeHtml(dt.label || '-')}:</span>
+                            <strong class="adc-val">${escapeHtml(dt.value || '-')}</strong>
+                            ${dt.other ? `<span>(${escapeHtml(dt.other)})</span>` : ''}
+                          </div>
+                        `).join('')}
+                      </div>
+                    ` : ''}
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีแบบประเมินผู้ป่วยใน</div>`}
+        </section>
+
+        <!-- Consults -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">ใบปรึกษาต่างแผนก (Consultation Documents)</h4>
+            <span class="badge-pill badge-muted">${consults.length} รายการ</span>
+          </div>
+          ${consults.length > 0 ? `
+            <div class="emr-list-stack">
+              ${consults.map(c => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <strong>ปรึกษาแผนก: ${escapeHtml(c.spclty_name || '-')}</strong>
+                    <span class="text-muted-sm">${escapeHtml(formatThaiDate(c.created_at))}</span>
+                  </div>
+                  ${c.clinical_diag ? `<div class="oi-subtext"><strong>Dx:</strong> ${escapeHtml(c.clinical_diag)}</div>` : ''}
+                  ${c.clinical_info ? `<div class="oi-subtext"><strong>ข้อมูลทางคลินิก:</strong> ${escapeHtml(c.clinical_info)}</div>` : ''}
+                  ${c.reason_text || c.needed_text ? `<div class="oi-subtext"><strong>วัตถุประสงค์:</strong> ${escapeHtml([c.reason_text, c.needed_text].filter(Boolean).join(' • '))}</div>` : ''}
+                  <div class="text-muted-sm" style="margin-top:4px;">แพทย์ผู้ส่งปรึกษา: ${escapeHtml(c.from_doctor_name || '-')}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีรายการใบปรึกษาต่างแผนก</div>`}
+        </section>
+
+        <!-- Paper Scans -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">ไฟล์สแกนเอกสารเวชระเบียน (Scanned Documents)</h4>
+            <span class="badge-pill badge-muted">${scans.length} ไฟล์</span>
+          </div>
+          ${scans.length > 0 ? `
+            <div class="emr-list-stack">
+              ${scans.map(ps => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <strong>${escapeHtml(ps.paper_type_name || ps.file_name || 'เอกสารสแกน')}</strong>
+                    <span class="text-muted-sm">${escapeHtml(formatThaiDate(ps.created_at))}</span>
+                  </div>
+                  ${ps.note ? `<div class="oi-subtext">${escapeHtml(ps.note)}</div>` : ''}
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีไฟล์สแกนเอกสารแนบ</div>`}
+        </section>
+      </div>
+    `;
+  }
+
+  // 8. Discharge Summary Tab
+  function renderEmrDischargeTab(d) {
+    const pt = d.patient || {};
+    const dches = d.discharges || [];
+    const summaries = d.summaries || [];
+    const diags = d.diagnoses || [];
+    const diagTexts = d.diagTexts || [];
+    const homeMeds = d.homeMeds || [];
+
+    const latestDch = dches[0] || null;
+    const latestSum = summaries[0] || null;
+
+    return `
+      <div class="emr-sections-stack">
+        <!-- Discharge Status & Summary Box -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">ข้อมูลการจำหน่ายผู้ป่วย (Discharge Summary Status)</h4>
+            <span class="badge-pill ${pt.confirm_discharge ? 'badge-active-pt' : 'badge-muted'}">
+              ${pt.confirm_discharge ? 'จำหน่ายแล้ว (Discharged)' : 'กำลังรักษาในโรงพยาบาล (Admitted)'}
+            </span>
+          </div>
+
+          <div class="emr-info-grid">
+            <div class="emr-info-item">
+              <span class="ei-label">วันที่จำหน่าย (Discharge Date)</span>
+              <span class="ei-val">${latestDch && latestDch.dchdate ? `${escapeHtml(formatThaiDate(latestDch.dchdate))} ${escapeHtml(formatTimeShort(latestDch.dchtime))}` : '-'}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">ประเภทการจำหน่าย (Discharge Type)</span>
+              <span class="ei-val">${escapeHtml((latestDch && latestDch.dch_type_name) || (latestSum && latestSum.dch_type_name) || '-')}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">สถานภาพการจำหน่าย (Discharge Status)</span>
+              <span class="ei-val">${escapeHtml((latestDch && latestDch.dch_status_name) || (latestSum && latestSum.dch_status_name) || '-')}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">จำนวนวันนอนรวม (LOS)</span>
+              <span class="ei-val">${escapeHtml(String((latestDch && latestDch.los) || calculateLosDays(pt.regdate) || '-'))} วัน</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">แพทย์ผู้จำหน่าย / สรุปชาร์ต</span>
+              <span class="ei-val">${escapeHtml((latestDch && (latestDch.dch_doctor_name || latestDch.summary_doctor_name)) || (latestSum && latestSum.doctor_user_name) || pt.incharge_doctor_name || '-')}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">แผนการรักษาต่อ / Operation</span>
+              <span class="ei-val">${escapeHtml([latestDch && latestDch.plan, latestDch && latestDch.operation].filter(Boolean).join(' • ') || '-')}</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ICD-10 / ICD-9 Diagnoses -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">การวินิจฉัยโรคและหัตถการสรุปจำหน่าย (ICD-10 / ICD-9 Coding)</h4>
+            <span class="badge-pill badge-order-pt">${diags.length} รายการ</span>
+          </div>
+          ${diags.length > 0 ? `
+            <div class="emr-table-responsive">
+              <table class="emr-table">
+                <thead>
+                  <tr>
+                    <th>ประเภท</th>
+                    <th>รหัส (Code)</th>
+                    <th>ชื่อการวินิจฉัย / หัตถการ</th>
+                    <th>แพทย์ผู้บันทึก</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${diags.map(dg => `
+                    <tr>
+                      <td><span class="badge-pill badge-order-pt">${escapeHtml(dg.diag_type_name || (dg.tab === 1 ? 'ICD-10' : 'ICD-9'))}</span></td>
+                      <td><strong>${escapeHtml(dg.code || '-')}</strong></td>
+                      <td>${escapeHtml(dg.icd10_name || dg.icd9_name || '-')}</td>
+                      <td>${escapeHtml(dg.doctor_name || '-')}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : `<div class="emr-empty-inline">ยังไม่มีการลงรหัสวินิจฉัยสรุปจำหน่าย (Pre-Dx: ${escapeHtml(pt.prediag || '-')})</div>`}
+
+          ${diagTexts.length > 0 ? `
+            <div class="emr-list-stack" style="margin-top:12px;">
+              ${diagTexts.map(dt => `
+                <div class="emr-item-card">
+                  <strong>${escapeHtml(dt.diag_type_name || 'Clinical Summary Note')}:</strong>
+                  <div class="oi-subtext">${escapeHtml(dt.diag_text || '-')}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+        </section>
+
+        <!-- Home Medications -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">ยากลับบ้าน (Home Medication)</h4>
+            <span class="badge-pill badge-order-pt">${homeMeds.length} รายการ</span>
+          </div>
+          ${homeMeds.length > 0 ? `
+            <div class="emr-list-stack">
+              ${homeMeds.map(hm => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <strong>${escapeHtml(hm.med_name || '-')}</strong>
+                    <span class="badge-pill badge-active-pt">จำนวน ${escapeHtml(hm.qty || '-')} ${escapeHtml(hm.unit_name || '')}</span>
+                  </div>
+                  <div class="oi-subtext">
+                    ${escapeHtml([hm.usage_text, hm.dose ? `ครั้งละ ${Number(hm.dose)} ${hm.unit_name || ''}` : '', hm.freq_text, hm.note].filter(Boolean).join(' • ') || '-')}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ยังไม่มีรายการยากลับบ้าน (Home Med)</div>`}
+        </section>
+      </div>
+    `;
+  }
+
+  // 9. Care Team Doctors Tab (ทีมแพทย์)
+  function renderEmrDoctorsTab(d) {
+    const pt = d.patient || {};
+    const doctors = d.doctors || [];
+
+    return `
+      <div class="emr-sections-stack">
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">ทีมแพทย์ผู้ดูแลรักษา (Care Team Doctors)</h4>
+            <span class="badge-pill badge-order-pt">${doctors.length} ท่าน</span>
+          </div>
+
+          ${doctors.length > 0 ? `
+            <div class="doctors-team-grid">
+              ${doctors.map(doc => {
+                const isOwner = Number(doc.ipd_doctor_type_id) === 1;
+                return `
+                  <div class="doctor-team-card ${isOwner && doc.active ? 'owner-active' : ''}">
+                    <div class="dtc-top">
+                      <span class="badge-pill ${isOwner ? 'badge-order-pt' : 'badge-muted'}">
+                        ${escapeHtml(doc.doctor_type_name || (isOwner ? 'แพทย์เจ้าของคนไข้' : 'แพทย์ร่วมรักษา'))}
+                      </span>
+                      <span class="badge-pill ${doc.active ? 'badge-active-pt' : 'badge-muted'}">
+                        ${doc.active ? 'กำลังดูแล (Active)' : 'สิ้นสุดแล้ว'}
+                      </span>
+                    </div>
+                    <h5 class="dtc-name">${escapeHtml(doc.doctor_name || '-')}</h5>
+                    <div class="dtc-meta">
+                      <span>เลข ว. / รหัส: <strong>${escapeHtml(doc.licenseno || doc.doctor_code || '-')}</strong></span>
+                      ${doc.spclty_name ? `<span>สาขา: <strong>${escapeHtml(doc.spclty_name)}</strong></span>` : ''}
+                      ${doc.position_name ? `<span>ตำแหน่ง: ${escapeHtml(doc.position_name)}</span>` : ''}
+                    </div>
+                    <div class="dtc-dates">
+                      <div>เริ่มดูแล: ${escapeHtml(formatThaiDate(doc.incharge_date))} ${escapeHtml(formatTimeShort(doc.incharge_time))}</div>
+                      ${doc.finish_date ? `<div>สิ้นสุด: ${escapeHtml(formatThaiDate(doc.finish_date))} ${escapeHtml(formatTimeShort(doc.finish_time))}</div>` : ''}
+                      ${doc.remark ? `<div>หมายเหตุ: ${escapeHtml(doc.remark)}</div>` : ''}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่พบรายการในตารางทีมแพทย์</div>`}
+        </section>
+
+        <section class="emr-card card-surface">
+          <h4 class="emr-card-title">ข้อมูลแพทย์แรกรับ (Admitting Doctor)</h4>
+          <div class="emr-info-grid">
+            <div class="emr-info-item">
+              <span class="ei-label">แพทย์เจ้าของคนไข้ปัจจุบัน</span>
+              <span class="ei-val">${escapeHtml(pt.incharge_doctor_name || '-')} ${pt.incharge_doctor_license ? `(${escapeHtml(pt.incharge_doctor_license)})` : ''}</span>
+            </div>
+            <div class="emr-info-item">
+              <span class="ei-label">แพทย์ผู้สั่งรับผู้ป่วยใน (Admitting Doctor)</span>
+              <span class="ei-val">${escapeHtml(pt.admitting_doctor_name || pt.adm_doctor_name || '-')} ${pt.admitting_doctor_license ? `(${escapeHtml(pt.admitting_doctor_license)})` : ''}</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  // 10. Set OR Tab
+  function renderEmrSetOrTab(d) {
+    const orCases = d.orCases || [];
+    const orOrders = d.orOrders || [];
+    const orReturns = d.orReturns || [];
+    const procs = d.procedures || [];
+
+    return `
+      <div class="emr-sections-stack">
+        <!-- Set OR Cases -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">รายการนัดผ่าตัด / Set OR (OR Schedule &amp; Cases)</h4>
+            <span class="badge-pill badge-order-pt">${orCases.length} รายการ</span>
+          </div>
+          ${orCases.length > 0 ? `
+            <div class="emr-list-stack">
+              ${orCases.map(oc => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <div>
+                      <strong>วันที่ผ่าตัด: ${escapeHtml(formatThaiDate(oc.op_date))} ${escapeHtml(formatTimeShort(oc.op_time))}</strong>
+                      ${oc.or_unit_name ? `<span class="badge-pill badge-order-pt">${escapeHtml(oc.or_unit_name)}</span>` : ''}
+                      ${oc.stage ? `<span class="badge-pill badge-active-pt">${escapeHtml(oc.stage)}</span>` : ''}
+                    </div>
+                    <span class="emr-doc-tag">ศัลยแพทย์: ${escapeHtml(oc.surgeon_name || '-')}</span>
+                  </div>
+                  <div class="emr-info-grid" style="margin-top:8px;">
+                    <div class="emr-info-item">
+                      <span class="ei-label">ประเภทเคส / Anesthesia</span>
+                      <span class="ei-val">${escapeHtml(oc.case_type || '-')} • Anes: ${escapeHtml(oc.anes_type || '-')}</span>
+                    </div>
+                    <div class="emr-info-item">
+                      <span class="ei-label">ตำแหน่ง (Site / Side)</span>
+                      <span class="ei-val">${escapeHtml([oc.site_other, oc.side].filter(Boolean).join(' • ') || '-')}</span>
+                    </div>
+                  </div>
+                  ${oc.note ? `<div class="oi-subtext" style="margin-top:6px;">หมายเหตุ: ${escapeHtml(oc.note)}</div>` : ''}
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีรายการนัดผ่าตัดในตาราง OR Cases</div>`}
+        </section>
+
+        <!-- Pre-Op / Operation Orders from Doctor Orders -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">คำสั่งแพทย์เตรียมผ่าตัด / หัตถการ (Pre-Operative &amp; Operation Orders)</h4>
+            <span class="badge-pill badge-order-pt">${orOrders.length} รายการ</span>
+          </div>
+          ${orOrders.length > 0 ? `
+            <div class="emr-list-stack">
+              ${orOrders.map(o => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <strong>${escapeHtml(o.order_desc || 'Operation Order')}</strong>
+                    <span class="text-muted-sm">${escapeHtml(formatThaiDate(o.order_date))} ${escapeHtml(formatTimeShort(o.order_time))}</span>
+                  </div>
+                  ${o.other ? `<div class="oi-subtext">${escapeHtml(o.other)}</div>` : ''}
+                  <div class="text-muted-sm" style="margin-top:4px;">แพทย์ผู้สั่ง: ${escapeHtml(o.doctor_name || '-')}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีคำสั่งแพทย์หมวด Operation</div>`}
+        </section>
+
+        <!-- OR Returns / Post-Op -->
+        <section class="emr-card card-surface">
+          <div class="emr-card-head">
+            <h4 class="emr-card-title">บันทึกรับกลับจากห้องผ่าตัด (OR Return &amp; Post-Op Records)</h4>
+            <span class="badge-pill badge-muted">${orReturns.length + procs.length} รายการ</span>
+          </div>
+          ${(orReturns.length > 0 || procs.length > 0) ? `
+            <div class="emr-list-stack">
+              ${orReturns.map(r => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <strong>รับกลับจาก OR เมื่อ: ${escapeHtml(formatThaiDate(r.return_at))}</strong>
+                    <span class="emr-doc-tag">${escapeHtml(r.created_by_name || '-')}</span>
+                  </div>
+                  ${r.note ? `<div class="oi-subtext">${escapeHtml(r.note)}</div>` : ''}
+                </div>
+              `).join('')}
+              ${procs.map(p => `
+                <div class="emr-item-card">
+                  <div class="emr-item-header">
+                    <strong>${escapeHtml(p.print_text || p.search_text || 'หัตถการ/ผ่าตัด')} ${p.icd9cm ? `(ICD9: ${escapeHtml(p.icd9cm)})` : ''}</strong>
+                    <span class="text-muted-sm">${escapeHtml(formatThaiDate(p.pdate))} ${escapeHtml(formatTimeShort(p.ptime))}</span>
+                  </div>
+                  ${p.note ? `<div class="oi-subtext">${escapeHtml(p.note)}</div>` : ''}
+                </div>
+              `).join('')}
+            </div>
+          ` : `<div class="emr-empty-inline">ไม่มีบันทึกรับกลับจากห้องผ่าตัด</div>`}
+        </section>
+      </div>
+    `;
+  }
+
   // ==================== EVENT LISTENERS ====================
   function bindEvents() {
     el.loginForm.addEventListener('submit', handleLoginSubmit);
@@ -1249,6 +2454,14 @@
     // Detail view navigation & order filters
     el.backToWardBtn.addEventListener('click', showLandingView);
 
+    if (el.ordersGotoEmrBtn) {
+      el.ordersGotoEmrBtn.addEventListener('click', () => {
+        if (state.currentPatientData && state.currentPatientData.patient) {
+          openPatientEmr(state.currentPatientData.patient.ipd_id, 'emr');
+        }
+      });
+    }
+
     el.refreshOrdersBtn.addEventListener('click', () => {
       if (state.currentPatientData && state.currentPatientData.patient) {
         fetchAndRenderPatientOrders(state.currentPatientData.patient.ipd_id);
@@ -1268,6 +2481,38 @@
         renderOrdersTimeline();
       });
     });
+
+    // EMR view navigation & 10 menu tabs
+    if (el.backFromEmrBtn) {
+      el.backFromEmrBtn.addEventListener('click', showLandingView);
+    }
+
+    if (el.emrGotoOrdersBtn) {
+      el.emrGotoOrdersBtn.addEventListener('click', () => {
+        if (state.currentEmrData && state.currentEmrData.patient) {
+          openPatientDetail(state.currentEmrData.patient.ipd_id);
+        }
+      });
+    }
+
+    if (el.refreshEmrBtn) {
+      el.refreshEmrBtn.addEventListener('click', () => {
+        if (state.currentEmrData && state.currentEmrData.patient) {
+          fetchAndRenderPatientEmr(state.currentEmrData.patient.ipd_id);
+        }
+      });
+    }
+
+    if (el.emrMenuTabs) {
+      el.emrMenuTabs.querySelectorAll('.emr-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const tabKey = btn.getAttribute('data-emr-tab') || 'emr';
+          state.activeEmrTab = tabKey;
+          updateActiveEmrTabUi();
+          renderActiveEmrTabContent();
+        });
+      });
+    }
   }
 
   // ==================== INIT ====================
