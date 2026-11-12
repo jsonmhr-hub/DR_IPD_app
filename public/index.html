@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="th">
   <head>
     <meta charset="UTF-8" />
@@ -15,7 +15,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.css?v=7" />
+    <link rel="stylesheet" href="/styles.css?v=8" />
   </head>
   <body>
     <div id="app">
@@ -431,6 +431,27 @@
               </button>
               <button
                 type="button"
+                id="orders-goto-opd-btn"
+                class="btn btn-outline btn-sm btn-opd-emr"
+                title="เปิดดูประวัติการรับบริการ OPD EMR"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <line x1="16" y1="13" x2="8" y2="13"/>
+                  <line x1="16" y1="17" x2="8" y2="17"/>
+                </svg>
+                <span>OPD EMR</span>
+              </button>
+              <button
+                type="button"
                 id="refresh-orders-btn"
                 class="btn btn-outline btn-sm"
               >
@@ -595,6 +616,27 @@
               </button>
               <button
                 type="button"
+                id="emr-goto-opd-btn"
+                class="btn btn-outline btn-sm btn-opd-emr"
+                title="เปิดดูประวัติการรับบริการ OPD EMR"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                  <line x1="16" y1="13" x2="8" y2="13"/>
+                  <line x1="16" y1="17" x2="8" y2="17"/>
+                </svg>
+                <span>OPD EMR</span>
+              </button>
+              <button
+                type="button"
                 id="refresh-emr-btn"
                 class="btn btn-outline btn-sm"
               >
@@ -686,6 +728,130 @@
 
           <div id="emr-content-container" class="emr-content-container">
             <!-- Populated dynamically according to active EMR menu -->
+          </div>
+        </main>
+
+        <!-- ==================== 2.3. PATIENT OPD EMR VIEW ==================== -->
+        <main id="patient-opd-view" class="main-container hidden">
+          <!-- Top Navigation Header -->
+          <div class="top-nav-bar">
+            <div class="nav-left">
+              <button
+                type="button"
+                id="back-to-ipd-from-opd-btn"
+                class="btn btn-outline btn-sm"
+              >
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                >
+                  <line x1="19" y1="12" x2="5" y2="12" />
+                  <polyline points="12 19 5 12 12 5" />
+                </svg>
+                <span>กลับมาที่ IPD</span>
+              </button>
+            </div>
+
+            <div class="nav-center">
+              <span class="nav-title" id="opd-nav-title">OPD EMR — ประวัติการตรวจผู้ป่วยนอก</span>
+            </div>
+
+            <div class="detail-nav-right">
+              <button
+                type="button"
+                id="refresh-opd-btn"
+                class="btn btn-outline btn-sm"
+              >
+                <svg
+                  width="17"
+                  height="17"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <polyline points="23 4 23 10 17 10" />
+                  <polyline points="1 20 1 14 7 14" />
+                  <path
+                    d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"
+                  />
+                </svg>
+                <span>รีเฟรช</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Patient Banner in OPD View -->
+          <section id="opd-patient-banner" class="patient-banner card-surface">
+            <!-- Populated dynamically -->
+          </section>
+
+          <!-- Mobile view segmented tabs for fast switching on phones -->
+          <div class="opd-mobile-switcher" role="tablist">
+            <button type="button" class="opd-mob-tab active" data-opd-mob="visits">
+              <span>ประวัติการตรวจ</span>
+              <span class="badge-pill" id="opd-mob-visit-count">0</span>
+            </button>
+            <button type="button" class="opd-mob-tab" data-opd-mob="card">
+              <span>OPD Card</span>
+            </button>
+            <button type="button" class="opd-mob-tab" data-opd-mob="tabs">
+              <span>Lab / X-Ray / ยา</span>
+            </button>
+          </div>
+
+          <!-- Loading Box -->
+          <div id="opd-loading" class="loading-box hidden">
+            <div class="spinner"></div>
+            <p>กำลังดึงข้อมูลประวัติการรับบริการ OPD...</p>
+          </div>
+
+          <!-- OPD 3-Column Grid Layout (matching PatientDetailPageNew) -->
+          <div id="opd-grid-container" class="opd-emr-grid">
+            <!-- Column 1: Visits History List -->
+            <aside class="opd-col opd-col-visits card-surface">
+              <div class="opd-col-header">
+                <h3>ประวัติการรับบริการ</h3>
+                <span class="badge-pill" id="opd-visit-count-badge">0</span>
+              </div>
+              <div id="opd-visits-list" class="opd-visits-list">
+                <!-- Visits loaded dynamically -->
+              </div>
+            </aside>
+
+            <!-- Column 2: OPD Card Content -->
+            <section class="opd-col opd-col-card card-surface">
+              <div class="opd-col-header opd-card-header-bar">
+                <div class="opd-card-header-title">
+                  <h3>OPD Card</h3>
+                  <span id="opd-card-date-badge" class="opd-date-pill">เลือก Visit</span>
+                </div>
+                <div id="opd-card-dept-badge" class="opd-dept-pill"></div>
+              </div>
+              <div id="opd-card-body" class="opd-card-body">
+                <!-- Populated dynamically when a visit is selected -->
+                <div class="opd-empty-prompt">
+                  <span class="empty-icon">👆</span>
+                  <p>กรุณาเลือกประวัติการรับบริการจากรายการด้านซ้าย</p>
+                </div>
+              </div>
+            </section>
+
+            <!-- Column 3: Tabular Details (LAB, X-RAY, MEDICINE) -->
+            <section class="opd-col opd-col-tabs card-surface">
+              <div class="opd-tabs-nav" role="tablist">
+                <button type="button" class="opd-right-tab active" data-rtab="LAB">LAB</button>
+                <button type="button" class="opd-right-tab" data-rtab="XRAY">X-RAY</button>
+                <button type="button" class="opd-right-tab" data-rtab="MEDICINE">MEDICINE</button>
+              </div>
+              <div id="opd-right-tab-content" class="opd-tab-body">
+                <!-- Populated dynamically according to active tab -->
+              </div>
+            </section>
           </div>
         </main>
 
@@ -890,6 +1056,6 @@
       </div>
     </div>
 
-    <script src="/app.js?v=7"></script>
+    <script src="/app.js?v=8"></script>
   </body>
 </html>

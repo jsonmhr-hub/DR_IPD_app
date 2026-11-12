@@ -2751,3 +2751,310 @@ html, body {
   }
 }
 
+
+/* ==================== OPD EMR VIEW ==================== */
+.btn-opd-emr {
+  background: #eef2ff !important;
+  color: #4338ca !important;
+  border-color: #c7d2fe !important;
+  font-weight: 600;
+}
+.btn-opd-emr:hover {
+  background: #e0e7ff !important;
+  border-color: #818cf8 !important;
+}
+
+#patient-opd-view .top-nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+#patient-opd-view .nav-left,
+#patient-opd-view .detail-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#patient-opd-view .nav-center {
+  flex: 1;
+  text-align: center;
+  min-width: 0;
+}
+#patient-opd-view .nav-title {
+  font-weight: 700;
+  font-size: 1rem;
+  color: #3730a3;
+}
+#back-to-ipd-from-opd-btn {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+  font-weight: 700;
+}
+
+.opd-mobile-switcher {
+  display: none;
+  gap: 6px;
+  margin-bottom: 10px;
+  overflow-x: auto;
+}
+.opd-mob-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  border: 1.5px solid #e2e8f0;
+  background: #f8fafc;
+  font-family: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #475569;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.opd-mob-tab.active {
+  background: #e0e7ff;
+  border-color: #6366f1;
+  color: #3730a3;
+}
+
+.opd-emr-grid {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 340px;
+  gap: 14px;
+  align-items: start;
+}
+.opd-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-height: calc(100vh - 200px);
+  overflow: hidden;
+  padding: 0 !important;
+}
+.opd-col-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-color);
+  background: #f8fafc;
+  flex-wrap: wrap;
+}
+.opd-col-header h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+}
+.opd-card-header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.opd-date-pill,
+.opd-dept-pill {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+.opd-date-pill { background: #e0e7ff; color: #3730a3; }
+.opd-dept-pill { background: #ecfdf5; color: #047857; }
+.opd-dept-pill:empty { display: none; }
+
+/* Visits list */
+.opd-visits-list {
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.opd-visit-item {
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.opd-visit-item:hover { background: #f8fafc; border-left-color: #818cf8; }
+.opd-visit-item.active {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  border-left-color: #4f46e5;
+}
+.opd-v-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.opd-v-date { font-weight: 700; font-size: 0.88rem; color: var(--text-main); }
+.opd-v-reg {
+  font-size: 0.72rem;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.opd-v-dept, .opd-v-doc {
+  font-size: 0.8rem;
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.opd-empty-list, .opd-empty-prompt {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 30px 12px;
+}
+.opd-empty-prompt .empty-icon { font-size: 2rem; display: block; margin-bottom: 8px; }
+
+/* OPD Card */
+.opd-card-body { overflow-y: auto; padding: 14px; }
+.opd-paper {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 16px;
+}
+.opd-sheet-header {
+  text-align: center;
+  border-bottom: 2px solid #1e293b;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+.opd-hospital-title { font-weight: 800; letter-spacing: 1px; font-size: 1rem; }
+.opd-sheet-sub { font-size: 0.82rem; color: #475569; }
+.opd-patient-info-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 6px 14px;
+  font-size: 0.84rem;
+  margin-bottom: 12px;
+}
+.opd-pi-label { color: #64748b; margin-right: 4px; }
+.opd-vitals-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.opd-vital-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+}
+.opd-vital-card .v-label { font-size: 0.7rem; color: #64748b; }
+.opd-vital-card .v-val { font-weight: 700; font-size: 0.95rem; }
+.opd-vital-card .v-val small { font-weight: 400; color: #94a3b8; font-size: 0.7rem; }
+.opd-clinical-sections { display: flex; flex-direction: column; gap: 10px; }
+.opd-section-block {
+  border: 1px solid #f1f5f9;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.opd-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.86rem;
+  margin-bottom: 6px;
+}
+.opd-section-body {
+  font-size: 0.88rem;
+  line-height: 1.6;
+  white-space: normal;
+  word-break: break-word;
+}
+.opd-sec-badge {
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 5px;
+  color: #fff;
+}
+.opd-sec-badge.cc { background: #f59e0b; }
+.opd-sec-badge.pi { background: #0ea5e9; }
+.opd-sec-badge.pe { background: #8b5cf6; }
+.opd-sec-badge.dx { background: #ef4444; }
+.opd-sec-badge.rx { background: #10b981; }
+.opd-highlight-box { background: #fef2f2; border-color: #fecaca; }
+.opd-dx-text { font-weight: 600; color: #991b1b; }
+.opd-pe-item { padding: 2px 0; }
+.opd-doctor-sig-box { margin-top: 18px; text-align: right; }
+.opd-sig-line { border-top: 1px dashed #94a3b8; width: 220px; margin: 0 0 6px auto; }
+.opd-sig-name { font-size: 0.84rem; color: #475569; }
+
+/* Right tabs */
+.opd-tabs-nav {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border-color);
+  background: #f8fafc;
+}
+.opd-right-tab {
+  flex: 1;
+  padding: 8px 6px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: #64748b;
+  cursor: pointer;
+}
+.opd-right-tab.active { background: #fff; border-color: #c7d2fe; color: #4338ca; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+.opd-tab-body { overflow-y: auto; padding: 10px; }
+.opd-tab-list { display: flex; flex-direction: column; gap: 6px; }
+.opd-tab-list-header { font-size: 0.8rem; font-weight: 700; color: #475569; margin-bottom: 2px; }
+.opd-tab-card {
+  border: 1px solid var(--border-color);
+  border-left: 3px solid #cbd5e1;
+  border-radius: 7px;
+  padding: 8px 10px;
+  font-size: 0.84rem;
+}
+.opd-tab-card.lab { border-left-color: #3b82f6; }
+.opd-tab-card.xray { border-left-color: #f59e0b; }
+.opd-tab-card.med { border-left-color: #10b981; }
+.opd-tc-top { display: flex; gap: 6px; align-items: flex-start; flex-wrap: wrap; }
+.opd-tc-name { flex: 1; min-width: 0; word-break: break-word; }
+.opd-tc-idx { color: #94a3b8; }
+.opd-tc-qty { font-size: 0.74rem; background: #ecfdf5; color: #047857; padding: 1px 6px; border-radius: 4px; }
+.opd-tc-sub, .opd-tc-doc { font-size: 0.76rem; color: #64748b; margin-top: 2px; }
+.opd-tc-sig { font-size: 0.8rem; color: #334155; margin-top: 3px; }
+
+@media (max-width: 1200px) {
+  .opd-emr-grid { grid-template-columns: 250px minmax(0, 1fr); }
+  .opd-col-tabs { grid-column: 1 / -1; max-height: none; }
+}
+
+@media (max-width: 900px) {
+  .opd-mobile-switcher { display: flex; }
+  .opd-emr-grid { grid-template-columns: 1fr; }
+  .opd-col { max-height: none; display: none; }
+  .opd-emr-grid.mob-show-visits .opd-col-visits,
+  .opd-emr-grid.mob-show-card .opd-col-card,
+  .opd-emr-grid.mob-show-tabs .opd-col-tabs { display: flex; }
+  .opd-vitals-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #patient-opd-view .nav-center { order: 3; flex-basis: 100%; text-align: left; }
+  .opd-card-body { padding: 8px; }
+  .opd-paper { padding: 12px; }
+}

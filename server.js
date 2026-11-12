@@ -1346,6 +1346,32 @@ app.get('/api/patients/:hn/his-lab', authenticateToken, async (req, res) => {
   }
 });
 
+// GET /api/patients/:hn/visits - Fetch OPD service history visits
+app.get('/api/patients/:hn/visits', authenticateToken, async (req, res) => {
+  try {
+    const hn = req.params.hn;
+    const visits = await hisDb.getPatientVisits(hn);
+    res.json(visits);
+  } catch (err) {
+    console.error('Get patient visits error:', err);
+    res.status(500).json({ error: 'ไม่สามารถดึงข้อมูลประวัติการรับบริการ (Visits) ได้: ' + err.message });
+  }
+});
+
+// GET /api/patients/:hn/visit-detail - Fetch OPD visit detail (vitals, PE, labs, xrays, medicines)
+app.get('/api/patients/:hn/visit-detail', authenticateToken, async (req, res) => {
+  try {
+    const hn = req.params.hn;
+    const regNo = req.query.regNo;
+    const rxNo = req.query.rxNo;
+    const detail = await hisDb.getVisitFullDetail(hn, regNo, rxNo);
+    res.json(detail);
+  } catch (err) {
+    console.error('Get visit detail error:', err);
+    res.status(500).json({ error: 'ไม่สามารถดึงข้อมูลรายละเอียด Visit ได้: ' + err.message });
+  }
+});
+
 // GET /api/order-meta - Lookup items for creating Doctor Orders (drugs, labs, xrays, diets, usages, freqs, spclties)
 app.get('/api/order-meta', authenticateToken, async (req, res) => {
   try {

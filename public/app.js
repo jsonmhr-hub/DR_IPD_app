@@ -28,6 +28,16 @@
       meta: null, // { usages, freqs, spclties, reasons, neededs, labPriorities, xrayPriorities }
       currentDrawerDraft: null,
       editingIndex: null
+    },
+
+    // OPD EMR State
+    opdEmr: {
+      visits: [],
+      selectedVisit: null,
+      visitDetail: null,
+      activeRightTab: 'LAB', // 'LAB', 'XRAY', 'MEDICINE'
+      activeMobileTab: 'visits', // 'visits', 'card', 'tabs'
+      previousView: 'orders' // 'orders' or 'emr'
     }
   };
 
@@ -124,6 +134,24 @@
     owDrawerCloseBtn: document.getElementById('ow-drawer-close-btn'),
     owDrawerCancelBtn: document.getElementById('ow-drawer-cancel-btn'),
     owDrawerConfirmBtn: document.getElementById('ow-drawer-confirm-btn'),
+
+    // OPD EMR View Elements
+    patientOpdView: document.getElementById('patient-opd-view'),
+    backToIpdFromOpdBtn: document.getElementById('back-to-ipd-from-opd-btn'),
+    opdNavTitle: document.getElementById('opd-nav-title'),
+    refreshOpdBtn: document.getElementById('refresh-opd-btn'),
+    opdPatientBanner: document.getElementById('opd-patient-banner'),
+    opdLoading: document.getElementById('opd-loading'),
+    opdGridContainer: document.getElementById('opd-grid-container'),
+    opdVisitsList: document.getElementById('opd-visits-list'),
+    opdVisitCountBadge: document.getElementById('opd-visit-count-badge'),
+    opdCardDateBadge: document.getElementById('opd-card-date-badge'),
+    opdCardDeptBadge: document.getElementById('opd-card-dept-badge'),
+    opdCardBody: document.getElementById('opd-card-body'),
+    opdRightTabContent: document.getElementById('opd-right-tab-content'),
+    opdMobVisitCount: document.getElementById('opd-mob-visit-count'),
+    ordersGotoOpdBtn: document.getElementById('orders-goto-opd-btn'),
+    emrGotoOpdBtn: document.getElementById('emr-goto-opd-btn'),
   };
 
   // ==================== HELPERS ====================
@@ -340,6 +368,7 @@
   function showLandingView() {
     el.patientDetailView.classList.add('hidden');
     if (el.patientEmrView) el.patientEmrView.classList.add('hidden');
+    if (el.patientOpdView) el.patientOpdView.classList.add('hidden');
     el.landingView.classList.remove('hidden');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -712,6 +741,7 @@
   async function openPatientDetail(ipdId) {
     el.landingView.classList.add('hidden');
     if (el.patientEmrView) el.patientEmrView.classList.add('hidden');
+    if (el.patientOpdView) el.patientOpdView.classList.add('hidden');
     el.patientDetailView.classList.remove('hidden');
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
@@ -1483,6 +1513,7 @@
   async function openPatientEmr(ipdId, initialTab = 'emr') {
     el.landingView.classList.add('hidden');
     el.patientDetailView.classList.add('hidden');
+    if (el.patientOpdView) el.patientOpdView.classList.add('hidden');
     el.patientEmrView.classList.remove('hidden');
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
@@ -2786,6 +2817,42 @@
       });
     }
 
+    // OPD EMR Navigation buttons
+    if (el.ordersGotoOpdBtn) {
+      el.ordersGotoOpdBtn.addEventListener('click', () => openOpdEmrView('orders'));
+    }
+    if (el.emrGotoOpdBtn) {
+      el.emrGotoOpdBtn.addEventListener('click', () => openOpdEmrView('emr'));
+    }
+    if (el.backToIpdFromOpdBtn) {
+      el.backToIpdFromOpdBtn.addEventListener('click', returnToIpdFromOpd);
+    }
+    if (el.refreshOpdBtn) {
+      el.refreshOpdBtn.addEventListener('click', () => {
+        if (state.currentPatientData && state.currentPatientData.patient) {
+          loadPatientVisits(state.currentPatientData.patient.hn);
+        }
+      });
+    }
+
+    // OPD Right Tab Navigation (LAB, XRAY, MEDICINE)
+    document.querySelectorAll('.opd-right-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const rtab = tab.getAttribute('data-rtab') || 'LAB';
+        state.opdEmr.activeRightTab = rtab;
+        document.querySelectorAll('.opd-right-tab').forEach(t => t.classList.toggle('active', t === tab));
+        renderOpdRightTabContent();
+      });
+    });
+
+    // OPD Mobile Switcher Tabs
+    document.querySelectorAll('.opd-mob-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const mob = tab.getAttribute('data-opd-mob');
+        switchOpdMobileTab(mob);
+      });
+    });
+
     if (el.emrMenuTabs) {
       el.emrMenuTabs.querySelectorAll('.emr-tab-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -3707,6 +3774,449 @@
           <span>บันทึกคำสั่งแพทย์</span>
         `;
       }
+    }
+  }
+
+  // ==================== OPD EMR FUNCTIONS ====================
+  function openOpdEmrView(fromView = 'orders') {
+    if (!state.currentPatientData || !state.currentPatientData.patient) {
+      alert('กรุณาเลือกผู้ป่วยก่อนเปิดดู OPD EMR');
+      return;
+    }
+    state.opdEmr.previousView = fromView;
+
+    if (el.patientDetailView) el.patientDetailView.classList.add('hidden');
+    if (el.patientEmrView) el.patientEmrView.classList.add('hidden');
+    if (el.patientOpdView) el.patientOpdView.classList.remove('hidden');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    renderOpdPatientBanner(state.currentPatientData);
+    switchOpdMobileTab('visits');
+    loadPatientVisits(state.currentPatientData.patient.hn);
+  }
+
+  function returnToIpdFromOpd() {
+    if (el.patientOpdView) el.patientOpdView.classList.add('hidden');
+    if (state.opdEmr.previousView === 'emr') {
+      if (el.patientEmrView) el.patientEmrView.classList.remove('hidden');
+    } else {
+      if (el.patientDetailView) el.patientDetailView.classList.remove('hidden');
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function switchOpdMobileTab(tabKey) {
+    state.opdEmr.activeMobileTab = tabKey;
+    document.querySelectorAll('.opd-mob-tab').forEach(t => {
+      t.classList.toggle('active', t.getAttribute('data-opd-mob') === tabKey);
+    });
+
+    const grid = el.opdGridContainer;
+    if (grid) {
+      grid.classList.remove('mob-show-visits', 'mob-show-card', 'mob-show-tabs');
+      grid.classList.add(`mob-show-${tabKey}`);
+    }
+  }
+
+  function renderOpdPatientBanner(ptData) {
+    if (!el.opdPatientBanner || !ptData || !ptData.patient) return;
+    const pt = ptData.patient;
+    const allergies = ptData.allergies || [];
+    const ageText = calculateAgeText(pt.birthday);
+
+    const allergyBadges = allergies.length > 0
+      ? allergies.map(a => `<span class="badge badge-allergy">${escapeHtml(a.agent || 'ไม่ระบุ')}${a.symptom ? ` (${escapeHtml(a.symptom)})` : ''}</span>`).join(' ')
+      : '<span class="text-muted">ไม่มีประวัติแพ้ยา</span>';
+
+    el.opdPatientBanner.innerHTML = `
+      <div class="banner-top-row">
+        <div class="pt-name-wrap">
+          <span class="pt-fullname">${escapeHtml(pt.fullname || '-')}</span>
+          <span class="pt-age-gender">${escapeHtml(pt.gender || '-')} • ${escapeHtml(ageText)}</span>
+          <span class="bed-chip ${pt.bed_no ? '' : 'no-bed'}">เตียง: ${escapeHtml(pt.bed_no || '-')}</span>
+        </div>
+        <div class="pt-identifiers">
+          <span class="id-tag"><span class="id-label">HN:</span> <span class="id-val">${escapeHtml(pt.hn || '-')}</span></span>
+          <span class="id-tag"><span class="id-label">AN:</span> <span class="id-val">${escapeHtml(pt.an || '-')}</span></span>
+        </div>
+      </div>
+      <div class="banner-meta-row">
+        <div class="meta-item">
+          <span class="meta-label">สิทธิการรักษา:</span>
+          <span class="meta-val">${escapeHtml(pt.pt_type_name || pt.pttype_name || '-')}</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">ประวัติแพ้ยา:</span>
+          <span class="meta-val">${allergyBadges}</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">วอร์ดปัจจุบัน:</span>
+          <span class="meta-val">${escapeHtml(pt.ward_name || state.selectedWard?.name || '-')}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  async function loadPatientVisits(hn) {
+    if (!hn) return;
+    if (el.opdLoading) el.opdLoading.classList.remove('hidden');
+
+    try {
+      const visits = await apiFetch(`/api/patients/${encodeURIComponent(hn)}/visits`);
+      // De-duplicate visits (HIS join on Deptq_d may return the same RX twice)
+      const seen = new Set();
+      state.opdEmr.visits = (Array.isArray(visits) ? visits : []).filter(v => {
+        const key = `${v.RegNo}|${String(v.RXNO || '').trim()}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      state.opdEmr.selectedVisit = null;
+
+      if (el.opdVisitCountBadge) el.opdVisitCountBadge.textContent = state.opdEmr.visits.length;
+      if (el.opdMobVisitCount) el.opdMobVisitCount.textContent = state.opdEmr.visits.length;
+
+      renderOpdVisitsList();
+
+      if (state.opdEmr.visits.length > 0) {
+        selectVisit(state.opdEmr.visits[0]);
+      } else {
+        if (el.opdCardBody) {
+          el.opdCardBody.innerHTML = `
+            <div class="opd-empty-prompt">
+              <span class="empty-icon">📂</span>
+              <p>ไม่พบประวัติการรับบริการ OPD สำหรับผู้ป่วย HN นี้</p>
+            </div>
+          `;
+        }
+        if (el.opdRightTabContent) {
+          el.opdRightTabContent.innerHTML = `<div class="empty-col-placeholder">- ไม่มีข้อมูล -</div>`;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load OPD visits:', err);
+      if (el.opdVisitsList) {
+        el.opdVisitsList.innerHTML = `<div class="alert-box error" style="margin:10px;">เกิดข้อผิดพลาดในการดึงข้อมูล: ${escapeHtml(err.message)}</div>`;
+      }
+    } finally {
+      if (el.opdLoading) el.opdLoading.classList.add('hidden');
+    }
+  }
+
+  function renderOpdVisitsList() {
+    if (!el.opdVisitsList) return;
+    const visits = state.opdEmr.visits;
+
+    if (!visits.length) {
+      el.opdVisitsList.innerHTML = `<div class="opd-empty-list">- ไม่มีประวัติการตรวจ OPD -</div>`;
+      return;
+    }
+
+    el.opdVisitsList.innerHTML = visits.map((v, idx) => {
+      const isSelected = state.opdEmr.selectedVisit && state.opdEmr.selectedVisit.RegNo === v.RegNo && state.opdEmr.selectedVisit.RXNO === v.RXNO;
+      const vDate = v.VisitDate ? new Date(v.VisitDate) : null;
+      const dateStr = vDate ? vDate.toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-';
+      const timeStr = vDate ? vDate.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '';
+
+      return `
+        <div class="opd-visit-item ${isSelected ? 'active' : ''}" data-visit-idx="${idx}">
+          <div class="opd-v-top">
+            <span class="opd-v-date">📅 ${escapeHtml(dateStr)} ${timeStr ? `<small>${escapeHtml(timeStr)} น.</small>` : ''}</span>
+            <span class="opd-v-reg">Reg: ${escapeHtml(v.RegNo || '-')}</span>
+          </div>
+          <div class="opd-v-dept">🏥 ${escapeHtml(v.deptDesc || 'ตรวจทั่วไป')}</div>
+          <div class="opd-v-doc">👨‍⚕️ ${escapeHtml(v.doctor_full_name || 'ไม่ระบุแพทย์')}</div>
+        </div>
+      `;
+    }).join('');
+
+    el.opdVisitsList.querySelectorAll('.opd-visit-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const idx = Number(item.getAttribute('data-visit-idx'));
+        const v = state.opdEmr.visits[idx];
+        if (v) {
+          selectVisit(v);
+          if (window.innerWidth <= 900) {
+            switchOpdMobileTab('card');
+          }
+        }
+      });
+    });
+  }
+
+  async function selectVisit(visit) {
+    if (!visit) return;
+    state.opdEmr.selectedVisit = visit;
+
+    // Highlight active card
+    el.opdVisitsList?.querySelectorAll('.opd-visit-item').forEach(card => {
+      const idx = Number(card.getAttribute('data-visit-idx'));
+      const v = state.opdEmr.visits[idx];
+      const isSel = v && v.RegNo === visit.RegNo && v.RXNO === visit.RXNO;
+      card.classList.toggle('active', isSel);
+    });
+
+    const vDate = visit.VisitDate ? new Date(visit.VisitDate) : null;
+    const dateFormatted = vDate ? vDate.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' }) : '-';
+
+    if (el.opdCardDateBadge) el.opdCardDateBadge.textContent = dateFormatted;
+    if (el.opdCardDeptBadge) el.opdCardDeptBadge.textContent = visit.deptDesc || '';
+
+    // Show temporary skeleton
+    if (el.opdCardBody) {
+      el.opdCardBody.innerHTML = `
+        <div class="loading-box" style="padding:40px 10px;">
+          <div class="spinner"></div>
+          <p>กำลังดึงข้อมูลเวชระเบียน OPD Card...</p>
+        </div>
+      `;
+    }
+
+    try {
+      const detail = await apiFetch(`/api/patients/${encodeURIComponent(visit.hn)}/visit-detail?regNo=${encodeURIComponent(visit.RegNo)}&rxNo=${encodeURIComponent(visit.RXNO || '')}`);
+      state.opdEmr.visitDetail = detail || {};
+      renderOpdCard(visit, state.opdEmr.visitDetail);
+      renderOpdRightTabContent();
+    } catch (err) {
+      console.error('Failed to load visit detail:', err);
+      if (el.opdCardBody) {
+        el.opdCardBody.innerHTML = `<div class="alert-box error" style="margin:20px;">ไม่สามารถดึงข้อมูล Visit Detail ได้: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+  }
+
+  function renderOpdCard(visit, detail) {
+    if (!el.opdCardBody) return;
+    const pt = state.currentPatientData?.patient || {};
+    const vitals = detail.vitals || {};
+    const vDate = visit.VisitDate ? new Date(visit.VisitDate) : null;
+    const dateStr = vDate ? vDate.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' }) : '-';
+    const timeStr = vDate ? vDate.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '';
+
+    // Physical exam items
+    let peContent = '';
+    if (Array.isArray(detail.pe) && detail.pe.length > 0) {
+      peContent = detail.pe.map(p => `
+        <div class="opd-pe-item">
+          <strong>${escapeHtml(p.physical_name || '')}:</strong> ${escapeHtml(p.result || '-')}
+        </div>
+      `).join('');
+    } else if (visit.clinicalFiding) {
+      peContent = `<div class="opd-pe-text">${escapeHtml(visit.clinicalFiding).replace(/\n/g, '<br/>')}</div>`;
+    } else {
+      peContent = '<span class="text-muted">- ไม่พบข้อมูลการตรวจร่างกาย -</span>';
+    }
+
+    el.opdCardBody.innerHTML = `
+      <div class="opd-paper">
+        <!-- Hospital & OPD Sheet Title -->
+        <div class="opd-sheet-header">
+          <div class="opd-hospital-title">OUTPATIENT DEPARTMENT</div>
+          <div class="opd-sheet-sub">บันทึกการตรวจรักษาผู้ป่วยนอก (OPD Card)</div>
+        </div>
+
+        <!-- Patient Demographics Strip -->
+        <div class="opd-patient-info-strip">
+          <div class="opd-pi-col">
+            <span class="opd-pi-label">ชื่อ-สกุล:</span>
+            <span class="opd-pi-val"><strong>${escapeHtml(pt.fullname || '-')}</strong></span>
+          </div>
+          <div class="opd-pi-col">
+            <span class="opd-pi-label">HN:</span>
+            <span class="opd-pi-val"><strong>${escapeHtml(visit.hn || pt.hn || '-')}</strong></span>
+          </div>
+          <div class="opd-pi-col">
+            <span class="opd-pi-label">อายุ:</span>
+            <span class="opd-pi-val">${escapeHtml(calculateAgeText(pt.birthday))}</span>
+          </div>
+          <div class="opd-pi-col">
+            <span class="opd-pi-label">เพศ:</span>
+            <span class="opd-pi-val">${escapeHtml(pt.gender || '-')}</span>
+          </div>
+          <div class="opd-pi-col">
+            <span class="opd-pi-label">วันที่ตรวจ:</span>
+            <span class="opd-pi-val">${escapeHtml(dateStr)} ${timeStr ? `(${escapeHtml(timeStr)} น.)` : ''}</span>
+          </div>
+          <div class="opd-pi-col">
+            <span class="opd-pi-label">RegNo:</span>
+            <span class="opd-pi-val">${escapeHtml(visit.RegNo || '-')}</span>
+          </div>
+          <div class="opd-pi-col">
+            <span class="opd-pi-label">แผนก:</span>
+            <span class="opd-pi-val">${escapeHtml(visit.deptDesc || '-')}</span>
+          </div>
+        </div>
+
+        <!-- Vital Signs Ribbon -->
+        <div class="opd-vitals-strip">
+          <div class="opd-vital-card">
+            <span class="v-label">ความดัน (BP)</span>
+            <span class="v-val">${vitals.Hbloodpress || vitals.Lbloodpress ? `${vitals.Hbloodpress || '-'}/${vitals.Lbloodpress || '-'}` : '-'} <small>mmHg</small></span>
+          </div>
+          <div class="opd-vital-card">
+            <span class="v-label">ชีพจร (PR)</span>
+            <span class="v-val">${vitals.Pulse || '-'} <small>bpm</small></span>
+          </div>
+          <div class="opd-vital-card">
+            <span class="v-label">อุณหภูมิ (T)</span>
+            <span class="v-val">${vitals.Temperature || '-'} <small>°C</small></span>
+          </div>
+          <div class="opd-vital-card">
+            <span class="v-label">การหายใจ (RR)</span>
+            <span class="v-val">${vitals.Breathe || '-'} <small>/min</small></span>
+          </div>
+          <div class="opd-vital-card">
+            <span class="v-label">SpO2</span>
+            <span class="v-val">${vitals.Sp02 || '-'} <small>%</small></span>
+          </div>
+          <div class="opd-vital-card">
+            <span class="v-label">น้ำหนัก (BW)</span>
+            <span class="v-val">${vitals.Weight || '-'} <small>kg</small></span>
+          </div>
+          <div class="opd-vital-card">
+            <span class="v-label">ส่วนสูง (Ht)</span>
+            <span class="v-val">${vitals.Height || '-'} <small>cm</small></span>
+          </div>
+          <div class="opd-vital-card">
+            <span class="v-label">BMI</span>
+            <span class="v-val">${vitals.BMI || '-'}</span>
+          </div>
+        </div>
+
+        <!-- Clinical Notes Section -->
+        <div class="opd-clinical-sections">
+          <!-- Chief Complaint -->
+          <div class="opd-section-block">
+            <div class="opd-section-title">
+              <span class="opd-sec-badge cc">CC</span>
+              <strong>อาการสำคัญ (Chief Complaint):</strong>
+            </div>
+            <div class="opd-section-body">
+              ${visit.Symtom ? escapeHtml(visit.Symtom).replace(/\n/g, '<br/>') : '<span class="text-muted">-</span>'}
+            </div>
+          </div>
+
+          <!-- Present Illness -->
+          <div class="opd-section-block">
+            <div class="opd-section-title">
+              <span class="opd-sec-badge pi">PI</span>
+              <strong>ประวัติปัจจุบัน (Present Illness):</strong>
+            </div>
+            <div class="opd-section-body">
+              ${visit.Present_illness ? escapeHtml(visit.Present_illness).replace(/\n/g, '<br/>') : '<span class="text-muted">-</span>'}
+            </div>
+          </div>
+
+          <!-- Physical Examination -->
+          <div class="opd-section-block">
+            <div class="opd-section-title">
+              <span class="opd-sec-badge pe">PE</span>
+              <strong>การตรวจร่างกาย (Physical Examination):</strong>
+            </div>
+            <div class="opd-section-body">
+              ${peContent}
+            </div>
+          </div>
+
+          <!-- Diagnosis -->
+          <div class="opd-section-block opd-highlight-box">
+            <div class="opd-section-title">
+              <span class="opd-sec-badge dx">Dx</span>
+              <strong>การวินิจฉัยโรค (Diagnosis):</strong>
+            </div>
+            <div class="opd-section-body opd-dx-text">
+              ${visit.DiagNote ? escapeHtml(visit.DiagNote).replace(/\n/g, '<br/>') : '<span class="text-muted">-</span>'}
+            </div>
+          </div>
+
+          <!-- Treatment / Plan -->
+          <div class="opd-section-block">
+            <div class="opd-section-title">
+              <span class="opd-sec-badge rx">Rx</span>
+              <strong>การรักษา / คำสั่งการรักษา (Treatment & Plan):</strong>
+            </div>
+            <div class="opd-section-body">
+              ${visit.Treatment ? escapeHtml(visit.Treatment).replace(/\n/g, '<br/>') : '<span class="text-muted">-</span>'}
+            </div>
+          </div>
+        </div>
+
+        <!-- Doctor Signature Footer -->
+        <div class="opd-doctor-sig-box">
+          <div class="opd-sig-line"></div>
+          <div class="opd-sig-name">( แพทย์ผู้ตรวจ: <strong>${escapeHtml(visit.doctor_full_name || 'ไม่ระบุชื่อแพทย์')}</strong> )</div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderOpdRightTabContent() {
+    if (!el.opdRightTabContent) return;
+    const detail = state.opdEmr.visitDetail || {};
+    const currentTab = state.opdEmr.activeRightTab || 'LAB';
+
+    if (currentTab === 'LAB') {
+      const labs = (Array.isArray(detail.labs) ? detail.labs : []).filter(l => l.lab_code || l.lab_name);
+      if (!labs.length) {
+        el.opdRightTabContent.innerHTML = `<div class="empty-col-placeholder">- ไม่มีรายการส่งตรวจ Lab ใน Visit นี้ -</div>`;
+        return;
+      }
+      el.opdRightTabContent.innerHTML = `
+        <div class="opd-tab-list">
+          <div class="opd-tab-list-header">รายการตรวจทางห้องปฏิบัติการ (${labs.length} รายการ)</div>
+          ${labs.map((l, idx) => `
+            <div class="opd-tab-card lab">
+              <div class="opd-tc-top">
+                <span class="opd-tc-idx">${idx + 1}.</span>
+                <span class="opd-tc-name"><strong>${escapeHtml(l.lab_name || l.lab_code || '-')}</strong></span>
+              </div>
+              ${l.lab_code ? `<div class="opd-tc-sub">รหัส Lab: ${escapeHtml(l.lab_code)}</div>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      `;
+    } else if (currentTab === 'XRAY') {
+      const xrays = Array.isArray(detail.xrays) ? detail.xrays : [];
+      if (!xrays.length) {
+        el.opdRightTabContent.innerHTML = `<div class="empty-col-placeholder">- ไม่มีรายการเอกซเรย์ใน Visit นี้ -</div>`;
+        return;
+      }
+      el.opdRightTabContent.innerHTML = `
+        <div class="opd-tab-list">
+          <div class="opd-tab-list-header">รายการเอกซเรย์ (${xrays.length} รายการ)</div>
+          ${xrays.map((x, idx) => `
+            <div class="opd-tab-card xray">
+              <div class="opd-tc-top">
+                <span class="opd-tc-idx">${idx + 1}.</span>
+                <span class="opd-tc-name"><strong>${escapeHtml(x.xproc_des || '-')}</strong></span>
+              </div>
+              ${x.time_request ? `<div class="opd-tc-sub">เวลาขอตรวจ: ${escapeHtml(x.time_request)} น.</div>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      `;
+    } else if (currentTab === 'MEDICINE') {
+      const meds = Array.isArray(detail.medicines) ? detail.medicines : [];
+      if (!meds.length) {
+        el.opdRightTabContent.innerHTML = `<div class="empty-col-placeholder">- ไม่มีรายการสั่งยาใน Visit นี้ -</div>`;
+        return;
+      }
+      el.opdRightTabContent.innerHTML = `
+        <div class="opd-tab-list">
+          <div class="opd-tab-list-header">รายการยาที่ได้รับ (${meds.length} รายการ)</div>
+          ${meds.map((m, idx) => `
+            <div class="opd-tab-card med">
+              <div class="opd-tc-top">
+                <span class="opd-tc-idx">${idx + 1}.</span>
+                <span class="opd-tc-name"><strong>${escapeHtml(m.name || '-')}</strong></span>
+                ${m.qty ? `<span class="opd-tc-qty">จำนวน: ${escapeHtml(m.qty)}</span>` : ''}
+              </div>
+              <div class="opd-tc-sig">💊 ${escapeHtml(m.dosagetxt || '-')}</div>
+              ${m.DOCCFullName ? `<div class="opd-tc-doc">👨‍⚕️ สั่งโดย: ${escapeHtml(m.DOCCFullName)}</div>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      `;
     }
   }
 

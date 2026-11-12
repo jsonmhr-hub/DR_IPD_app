@@ -311,10 +311,350 @@ async function getHisLabResults(hn, reqDate = null) {
   }
 }
 
+async function getPatientVisits(hn) {
+  const clean = formatHn(hn);
+  if (!clean) return [];
+  const pool = await getHisPool();
+  if (!pool) return [];
+
+  try {
+    const q = await pool.request()
+      .input('hn', sql.NVarChar, clean)
+      .query(`
+        SELECT 
+            T.*, 
+            RTRIM(LTRIM(d.docName)) + ' ' + RTRIM(LTRIM(d.docLName)) AS doctor_full_name,
+            Q.deptCode,
+            D.deptDesc
+        FROM [MHR].[dbo].[DoccTreatment] T WITH(NOLOCK)
+        LEFT JOIN [MHR].[dbo].[DOCC] d WITH(NOLOCK) ON LTRIM(RTRIM(T.docCode)) = LTRIM(RTRIM(d.docCode))
+        LEFT JOIN [MHR].[dbo].[Deptq_d] Q WITH (NOLOCK) ON T.RXNO = Q.rxNo
+        LEFT JOIN [MHR].[dbo].[DEPT] D WITH (NOLOCK) ON Q.deptCode = D.deptCode
+        WHERE T.hn = @hn
+        ORDER BY T.hn desc, T.VisitDate desc
+      `);
+    return q.recordset || [];
+  } catch (err) {
+    console.error('[HIS] getPatientVisits error:', err.message);
+    return [];
+  }
+}
+
+async function getVisitVitals(hn, regNo) {
+  const clean = formatHn(hn);
+  if (!clean) return null;
+  const pool = await getHisPool();
+  if (!pool) return null;
+
+  try {
+    const req = pool.request().input('hn', sql.NVarChar, clean);
+    let sqlText = `
+      SELECT TOP 1
+          S.hn,
+          S.RegNo,
+          S.RXNO,
+          S.VitalSignNo,
+          S.Weight,
+          S.Height,
+          S.Lbloodpress,
+          S.Hbloodpress,
+          S.Temperature,
+          S.Pulse,
+          S.Breathe,
+          S.Sp02,
+          ROUND(S.Weight / NULLIF(((S.Height * S.Height) / 10000), 0), 2) AS BMI
+      FROM SSREGIST S WITH (NOLOCK)
+      WHERE S.hn = @hn
+    `;
+    if (regNo) {
+      sqlText += ` AND S.RegNo = @regNo `;
+      req.input('regNo', sql.NVarChar, regNo);
+    }
+    sqlText += ` ORDER BY S.VitalSignNo DESC; `;
+    const q = await req.query(sqlText);
+    return q.recordset && q.recordset[0] ? q.recordset[0] : null;
+  } catch (err) {
+    console.error('[HIS] getVisitVitals error:', err.message);
+    return null;
+  }
+}
+
+async function getVisitPE(hn, regNo, rxNo) {
+  const clean = formatHn(hn);
+  if (!clean || !regNo || !rxNo) return [];
+  const pool = await getHisPool();
+  if (!pool) return [];
+
+  try {
+    const q = await pool.request()
+      .input('hn', sql.NVarChar, clean)
+      .input('regNo', sql.NVarChar, regNo)
+      .input('rxNo', sql.NVarChar, rxNo)
+      .query(`
+select * from(  
+SELECT nn,vs.physical_name
+,case	when isnull( vs.Normal,'N') = 'Y'  and vs.physical_vs = '' then 'Normal'
+		else vs.physical_vs end result
+from (
+(select top 1 'GA :' physical_name ,isnull(VPE.Normal_GA,s.PE_GA_normal)  as Normal
+   ,ISNULL(VPE.GA,
+			SUBSTRING(dbo.RTF2TXT_TH(v.Physical_Exam)
+			,charindex('[GA]',dbo.RTF2TXT_TH(v.Physical_Exam))+5
+			,ABS(charindex('[OTHER]',dbo.RTF2TXT_TH(v.Physical_Exam)) - charindex('[GA]',dbo.RTF2TXT_TH(v.Physical_Exam))-6))) as physical_vs ,v.SYSID,v.RXNO, v.VitalSignNo,v.RegNo ,v.hn  
+	,1 as nn    
+from VitalSign v (nolock ) left join SSREGIST s (nolock ) on s.hn=v.hn and s.RegNo = v.RegNo
+left join VitalSignPE VPE (nolock ) on VPE.Hn = s.hn and VPE.RegNo = s.RegNo and  v.RXNO = VPE.RXNO   
+where v.hn = @hn
+and v.RegNo = @regNo 
+and v.RXNO = @rxNo     
+and v.SYSID ='DOCSTN'    
+and v.VitalSignNo = (SELECT top 1 vt.VitalSignNo FROM dbo.VitalSign vt (nolock ) where vt.hn = v.hn and vt.RegNo = vt.RegNo and vt.RXNO = v.RXNO and vt.SYSID = 'DOCSTN'order by vt.VitalSignNo desc)
+)
+union 
+(select top 1 'HEENT :' physical_name ,isnull((isnull(VPE.Normal_HEENT,s.PE_Head_normal)),s.PE_Neck_normal)  as Normal
+   ,replace(ISNULL(VPE.HEENT,''+
+			SUBSTRING(dbo.RTF2TXT_TH(v.Physical_Exam)
+			,charindex('[HEAD]',dbo.RTF2TXT_TH(v.Physical_Exam))+7
+			,ABS(charindex('[NECK]',dbo.RTF2TXT_TH(v.Physical_Exam))-9)) 
+			+'' + SUBSTRING(dbo.RTF2TXT_TH(v.Physical_Exam)
+			,charindex('[NECK]',dbo.RTF2TXT_TH(v.Physical_Exam))+7
+			,ABS(charindex('[CHEST]',dbo.RTF2TXT_TH(v.Physical_Exam)) - charindex('[NECK]',dbo.RTF2TXT_TH(v.Physical_Exam))-9)))
+			,char(10),'')
+			 as physical_vs,v.SYSID,v.RXNO, v.VitalSignNo,v.RegNo ,v.hn  
+ 	,2 as nn  
+from VitalSign v (nolock ) left join SSREGIST s (nolock ) on s.hn=v.hn and s.RegNo = v.RegNo
+left join VitalSignPE VPE (nolock ) on VPE.Hn = s.hn and VPE.RegNo = s.RegNo and  v.RXNO = VPE.RXNO   
+where v.hn = @hn
+and v.RegNo = @regNo  
+and v.RXNO = @rxNo       
+and v.SYSID ='DOCSTN'    
+and v.VitalSignNo = (SELECT top 1 vt.VitalSignNo FROM dbo.VitalSign vt (nolock ) where vt.hn = v.hn and vt.RegNo = vt.RegNo and vt.RXNO = v.RXNO and vt.SYSID = 'DOCSTN'order by vt.VitalSignNo desc)
+) 
+union 
+(select top 1 'Heart :' physical_name ,isnull(VPE.Normal_HEART,s.PE_Chest_normal)  as Normal
+   ,ISNULL(VPE.HEART,
+			SUBSTRING(dbo.RTF2TXT_TH(v.Physical_Exam)
+			,charindex('[CHEST]',dbo.RTF2TXT_TH(v.Physical_Exam))+8
+			,ABS(charindex('[ABDOMEN]',dbo.RTF2TXT_TH(v.Physical_Exam)) - charindex('[CHEST]',dbo.RTF2TXT_TH(v.Physical_Exam))-9))) as physical_vs,v.SYSID,v.RXNO, v.VitalSignNo,v.RegNo ,v.hn  
+ 	,3 as nn  
+from VitalSign v (nolock ) left join SSREGIST s (nolock ) on s.hn=v.hn and s.RegNo = v.RegNo
+left join VitalSignPE VPE (nolock ) on VPE.Hn = s.hn and VPE.RegNo = s.RegNo  and  v.RXNO = VPE.RXNO   
+where v.hn = @hn
+and v.RegNo = @regNo 
+and v.RXNO = @rxNo       
+and v.SYSID ='DOCSTN'    
+and v.VitalSignNo = (SELECT top 1 vt.VitalSignNo FROM dbo.VitalSign vt (nolock ) where vt.hn = v.hn and vt.RegNo = vt.RegNo and vt.RXNO = v.RXNO and vt.SYSID = 'DOCSTN'order by vt.VitalSignNo desc)
+) 
+union 
+(select top 1 'Lung :' physical_name ,VPE.Normal_LUNG as Normal
+,ISNULL(VPE.LUNG,'') as physical_vs,v.SYSID,v.RXNO, v.VitalSignNo,v.RegNo ,v.hn  
+ 	,4 as nn  
+from VitalSign v (nolock ) left join SSREGIST s (nolock ) on s.hn=v.hn and s.RegNo = v.RegNo
+left join VitalSignPE VPE (nolock ) on VPE.Hn = s.hn and VPE.RegNo = s.RegNo and  v.RXNO = VPE.RXNO   
+where v.hn = @hn
+and v.RegNo = @regNo  
+and v.RXNO = @rxNo      
+and v.SYSID ='DOCSTN'    
+and v.VitalSignNo = (SELECT top 1 vt.VitalSignNo FROM dbo.VitalSign vt (nolock ) where vt.hn = v.hn and vt.RegNo = vt.RegNo and vt.RXNO = v.RXNO and vt.SYSID = 'DOCSTN'order by vt.VitalSignNo desc)
+)
+union 
+(select top 1 'Abdomen :' physical_name ,isnull(VPE.Normal_Ab,s.PE_Abdomen_normal)  as Normal
+,isnull(VPE.Ab,
+			SUBSTRING(dbo.RTF2TXT_TH(v.Physical_Exam)
+			,charindex('[ABDOMEN]',dbo.RTF2TXT_TH(v.Physical_Exam))+10
+			,ABS(charindex('[EXTRA]',dbo.RTF2TXT_TH(v.Physical_Exam)) - charindex('[ABDOMEN]',dbo.RTF2TXT_TH(v.Physical_Exam))-11))) as physical_vs,v.SYSID,v.RXNO, v.VitalSignNo,v.RegNo ,v.hn  
+ 	,5 as nn  
+from VitalSign v (nolock ) left join SSREGIST s (nolock ) on s.hn=v.hn and s.RegNo = v.RegNo
+left join VitalSignPE VPE (nolock ) on VPE.Hn = s.hn and VPE.RegNo = s.RegNo and  v.RXNO = VPE.RXNO   
+where v.hn = @hn
+and v.RegNo = @regNo 
+and v.RXNO = @rxNo       
+and v.SYSID ='DOCSTN'    
+and v.VitalSignNo = (SELECT top 1 vt.VitalSignNo FROM dbo.VitalSign vt (nolock ) where vt.hn = v.hn and vt.RegNo = vt.RegNo and vt.RXNO = v.RXNO and vt.SYSID = 'DOCSTN'order by vt.VitalSignNo desc)
+)
+union 
+(select top 1 'Extremity :' physical_name ,isnull(VPE.Normal_Ext,s.PE_Extremity_normal)  as Normal
+   ,ISNULL(VPE.Ext,
+			SUBSTRING(dbo.RTF2TXT_TH(v.Physical_Exam)
+			,charindex('[EXTRA]',dbo.RTF2TXT_TH(v.Physical_Exam))+8
+			,ABS(charindex('[GA]',dbo.RTF2TXT_TH(v.Physical_Exam)) - charindex('[EXTRA]',dbo.RTF2TXT_TH(v.Physical_Exam))-9))) as physical_vs,v.SYSID,v.RXNO, v.VitalSignNo,v.RegNo ,v.hn  
+  	,6 as nn  
+from VitalSign v (nolock ) left join SSREGIST s (nolock ) on s.hn=v.hn and s.RegNo = v.RegNo
+left join VitalSignPE VPE (nolock ) on VPE.Hn = s.hn and VPE.RegNo = s.RegNo  and  v.RXNO = VPE.RXNO   
+where v.hn = @hn
+and v.RegNo = @regNo  
+and v.RXNO = @rxNo       
+and v.SYSID ='DOCSTN'    
+and v.VitalSignNo = (SELECT top 1 vt.VitalSignNo FROM dbo.VitalSign vt (nolock ) where vt.hn = v.hn and vt.RegNo = vt.RegNo and vt.RXNO = v.RXNO and vt.SYSID = 'DOCSTN'order by vt.VitalSignNo desc)
+)
+union 
+(select top 1 'Neuro :' physical_name ,VPE.Normal_Neuro as Normal
+,ISNULL(VPE.Neuro,'') as physical_vs,v.SYSID,v.RXNO, v.VitalSignNo,v.RegNo ,v.hn  
+ 	,7 as nn  
+from VitalSign v (nolock ) left join SSREGIST s (nolock ) on s.hn=v.hn and s.RegNo = v.RegNo
+left join VitalSignPE VPE (nolock ) on VPE.Hn = s.hn and VPE.RegNo = s.RegNo  and  v.RXNO = VPE.RXNO   
+where v.hn = @hn
+and v.RegNo = @regNo 
+and v.RXNO = @rxNo  
+and v.SYSID ='DOCSTN'    
+and v.VitalSignNo = (SELECT top 1 vt.VitalSignNo FROM dbo.VitalSign vt (nolock ) where vt.hn = v.hn and vt.RegNo = vt.RegNo and vt.RXNO = v.RXNO and vt.SYSID = 'DOCSTN'order by vt.VitalSignNo desc)
+)
+union 
+(select top 1 'Other :' physical_name ,isnull(VPE.Normal_Other,s.PE_Others_normal)  as Normal
+,ISNULL(VPE.Other,SUBSTRING(dbo.RTF2TXT_TH(v.Physical_Exam),charindex('[OTHER]'
+,dbo.RTF2TXT_TH(v.Physical_Exam))+8,ABS(charindex('[HEART]',dbo.RTF2TXT_TH(v.Physical_Exam)) - charindex('[OTHER]',dbo.RTF2TXT_TH(v.Physical_Exam))-9))) as physical_vs
+,v.SYSID,v.RXNO, v.VitalSignNo,v.RegNo ,v.hn  
+	,8 as nn  
+from VitalSign v (nolock ) left join SSREGIST s (nolock ) on s.hn=v.hn and s.RegNo = v.RegNo
+left join VitalSignPE VPE (nolock ) on VPE.Hn = s.hn and VPE.RegNo = s.RegNo and  v.RXNO = VPE.RXNO   
+where v.hn = @hn
+and v.RegNo = @regNo 
+and v.RXNO = @rxNo       
+and v.SYSID ='DOCSTN'    
+and v.VitalSignNo = (SELECT top 1 vt.VitalSignNo FROM dbo.VitalSign vt (nolock ) where vt.hn = v.hn and vt.RegNo = vt.RegNo and vt.RXNO = v.RXNO and vt.SYSID = 'DOCSTN'order by vt.VitalSignNo desc)
+)
+) vs
+)D where D.result <> ''
+order by nn
+      `);
+    return q.recordset || [];
+  } catch (err) {
+    console.error('[HIS] getVisitPE error:', err.message);
+    return [];
+  }
+}
+
+async function getVisitLabs(hn, regNo) {
+  const clean = formatHn(hn);
+  if (!clean || !regNo) return [];
+  const pool = await getHisPool();
+  if (!pool) return [];
+
+  try {
+    const q = await pool.request()
+      .input('hn', sql.NVarChar, clean)
+      .input('regNo', sql.NVarChar, regNo)
+      .query(`
+        select distinct o.hn, o.regNo, o.registDate, h.req_no,
+        rd.lab_code, rd.lab_name
+        from OPD_H o with (nolock)
+        left join Labreq_h h with (nolock) on o.hn=h.hn and o.regNo=h.reg_flag
+        left join Labreq_d rd with (nolock) on h.req_no=rd.req_no
+        where o.hn = @hn and o.regNo = @regNo
+        and (isnull(rd.reverse_flag,'')='')
+      `);
+    return q.recordset || [];
+  } catch (err) {
+    console.error('[HIS] getVisitLabs error:', err.message);
+    return [];
+  }
+}
+
+async function getVisitXrays(hn, regNo) {
+  const clean = formatHn(hn);
+  if (!clean || !regNo) return [];
+  const pool = await getHisPool();
+  if (!pool) return [];
+
+  try {
+    const q = await pool.request()
+      .input('hn', sql.NVarChar, clean)
+      .input('regNo', sql.NVarChar, regNo)
+      .query(`
+        SELECT 
+        convert(char,convert(numeric,convert(char,a.xreq_date,112))+5430000) as date
+        ,b.xreq_time
+        ,substring(b.xreq_time,1,2)+':'+substring(b.xreq_time,3,2) as 'time_request'
+        ,b.hn,b.regist_flag
+        ,g.xproc_des
+        ,ltrim(rtrim(b.xreq_doc_code)) as xreq_doc_code
+        FROM Xreq_d a with (nolock)
+        left join Xreq_h b with (nolock) on ((a.xrunno=b.xrunno)and (a.xprefix = b.xprefix) and (a.xreq_date=b.xreq_date))
+        left join Xpart f with (nolock) on (a.xpart_code = f.xpart_code)
+        left join Xproc g with (nolock) on (f.xpart_code = g.xproc_part and a.xproc_code = g.xproc_code)
+        where b.hn = @hn and b.regist_flag = @regNo
+        and isnull(a.xrev_flag,'')=''
+        order by ltrim(rtrim(b.xreq_doc_code)), g.xproc_des
+      `);
+    return q.recordset || [];
+  } catch (err) {
+    console.error('[HIS] getVisitXrays error:', err.message);
+    return [];
+  }
+}
+
+async function getVisitMedicines(hn, regNo, rxNo) {
+  const clean = formatHn(hn);
+  if (!clean || !regNo || !rxNo) return [];
+  const pool = await getHisPool();
+  if (!pool) return [];
+
+  try {
+    const q = await pool.request()
+      .input('hn', sql.NVarChar, clean)
+      .input('regNo', sql.NVarChar, regNo)
+      .input('rxNo', sql.NVarChar, rxNo)
+      .query(`
+        select distinct                     
+        H.hn, H.regNo
+        ,L.remark as rxNo
+        ,L.inv_code, UPPER(M.name) as name                       
+        ,convert(numeric, L.quant) as qty
+        ,isnull([dbo].[chkEyeHow](HOW.lamed_code) 
+        + rtrim(case when P.qtyPerFeed = '0' then '' else P.qtyPerFeed end) 
+        + rtrim(dbo.chkUnit(UN.lamed_code)) 
+        + case when P.lamedTimeText = TM.lamed_name then ' x '+ TM.alias else ' ' + rtrim(isnull(P.lamedTimeText,'')) 
+        +' ' + UN.lamed_name end, rtrim(isnull(HOW.lamed_name,''))+ ' ' + rtrim(isnull(case when P.qtyPerFeed ='0' then '' else P.qtyPerFeed end,'')) 
+        +' ' +rtrim(isnull(UN.lamed_name,'')) + '  '+ isnull(P.lamedTimeText,'') ) +'  ' +isnull([dbo].[GetLamedDayText](P.lamedDayText),'') as dosagetxt 
+        ,IH.reqNo
+        ,IH.reqUser
+        ,case when IH.reqUser like 'S%' then rtrim(isnull(DC.doctitle,'')) + ' ' + rtrim(isnull(DC.docName,'')) + ' ' + rtrim(DC.docLName) +' / Staff : '
+        +rtrim(isnull(DC1.doctitle,'')) + ' ' + rtrim(isnull(DC1.docName,'')) + ' ' + rtrim(DC1.docLName) +'  ' + rtrim(isnull(DC1.doctorID,'')) 
+        when DC.doctype not in ('001','002','003','004') or DC.doctype is null then rtrim(isnull(DC1.doctitle,'')) + ' ' + rtrim(isnull(DC1.docName,'')) + ' ' + rtrim(DC1.docLName) +'  ' + rtrim(isnull(DC1.doctorID,'')) 
+        else rtrim(isnull(DC.doctitle,'')) + ' ' + rtrim(isnull(DC.docName,'')) + ' ' + rtrim(DC.docLName) +'  ' + rtrim(isnull(DC.doctorID,'')) end as DOCCFullName  
+        from Med_logh H (nolock)
+        LEFT JOIN Med_log L (nolock) on L.batch_no = H.batch_no
+        LEFT JOIN Patmed P (nolock) on P.hn = H.hn and P.registNo = H.regNo and P.invCode = L.inv_code and P.runNo = L.quant_diff
+        LEFT JOIN Med_inv M (nolock) on M.code = L.inv_code and M.site ='1'
+        LEFT JOIN InvReqH IH (nolock) on IH.hn = H.hn and IH.reqNo = L.reqNo
+        LEFT JOIN Lamed HOW (NOLOCK) ON (HOW.lamed_code = P.lamedHow or HOW.lamed_code = '*'+ P.lamedHow)
+        LEFT JOIN Lamed UN (NOLOCK) ON (UN.lamed_code = P.lamedUnit or UN.lamed_code = '!'+ P.lamedUnit)
+        LEFT JOIN Lamed TM (NOLOCK) ON (TM.lamed_code = P.lamedTime or TM.lamed_code = '&' + P.lamedTime)
+        LEFT JOIN DOCC DC ON ltrim(DC.docCode) = ltrim(IH.reqUser) and isnull(DC.hideSelect ,'N') <>'Y'  
+        LEFT JOIN DOCC DC1 ON ltrim(DC1.docCode) = ltrim(P.orderDoc) and isnull(DC1.hideSelect ,'N') <>'Y'
+        where H.hn = @hn and H.regNo = @regNo and L.remark = @rxNo                                                                                   
+        and isnull(L.revFlag,'') not in ('r','R')
+        order by L.remark, UPPER(M.name) ASC
+      `);
+    return q.recordset || [];
+  } catch (err) {
+    console.error('[HIS] getVisitMedicines error:', err.message);
+    return [];
+  }
+}
+
+async function getVisitFullDetail(hn, regNo, rxNo) {
+  const [vitals, pe, labs, xrays, medicines] = await Promise.all([
+    getVisitVitals(hn, regNo),
+    getVisitPE(hn, regNo, rxNo),
+    getVisitLabs(hn, regNo),
+    getVisitXrays(hn, regNo),
+    getVisitMedicines(hn, regNo, rxNo)
+  ]);
+  return { vitals, pe, labs, xrays, medicines };
+}
+
 module.exports = {
   getHisPool,
   getHisLabDates,
   getHisLabResults,
+  getPatientVisits,
+  getVisitVitals,
+  getVisitPE,
+  getVisitLabs,
+  getVisitXrays,
+  getVisitMedicines,
+  getVisitFullDetail,
   formatHn
 };
 
