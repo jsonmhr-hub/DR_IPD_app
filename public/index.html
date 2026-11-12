@@ -15,7 +15,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.css?v=3" />
+    <link rel="stylesheet" href="/styles.css?v=7" />
   </head>
   <body>
     <div id="app">
@@ -276,7 +276,7 @@
 
             <!-- Quick horizontal/grid Ward Chips for fast touch on iPad & Mobile -->
             <div class="ward-chips-bar">
-              <div class="ward-chips-header">
+              <div class="ward-chips-header" style="display: none;">
                 <button
                   type="button"
                   id="toggle-all-wards-btn"
@@ -496,6 +496,25 @@
               id="order-category-tabs"
               role="tablist"
             >
+              <button
+                type="button"
+                id="open-create-order-btn"
+                class="cat-tab btn-create-order-tab"
+                title="เปิดฟอร์มเขียนคำสั่งการรักษาใหม่"
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.6"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                <span>New Order</span>
+              </button>
               <button type="button" class="cat-tab active" data-cat="all">
                 ทั้งหมด
               </button>
@@ -669,9 +688,208 @@
             <!-- Populated dynamically according to active EMR menu -->
           </div>
         </main>
+
+        <!-- ==================== 3. CREATE ORDER POPUP MODAL (+Order) ==================== -->
+        <div id="create-order-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="order-modal-title">
+          <div class="modal-sheet-dialog order-writer-dialog">
+            <!-- Modal Header -->
+            <header class="order-writer-header">
+              <div class="ow-header-info">
+                <div class="ow-title-wrap">
+                  <span class="ow-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                      <line x1="12" y1="18" x2="12" y2="12"/>
+                      <line x1="9" y1="15" x2="15" y2="15"/>
+                    </svg>
+                  </span>
+                  <div>
+                    <h3 id="order-modal-title">เขียนคำสั่งการรักษาใหม่ (Doctor Order)</h3>
+                    <p id="order-modal-patient-info" class="ow-pt-sub">กำลังโหลดข้อมูลผู้ป่วย...</p>
+                  </div>
+                </div>
+              </div>
+              <button type="button" id="close-order-modal-btn" class="modal-close-btn" aria-label="ปิดหน้าต่าง">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3">
+                  <line x1="18" y1="6" x2="6" y2="18"/>
+                  <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </header>
+
+            <!-- Patient Quick Strip (Dx, Allergies, V/S) -->
+            <div id="ow-patient-strip" class="ow-patient-strip">
+              <!-- Dynamically populated -->
+            </div>
+
+            <!-- Error Banner -->
+            <div id="ow-error-banner" class="alert-box error hidden"></div>
+
+            <!-- Mobile-Friendly Column Switcher Tabs -->
+            <div class="ow-col-tabs" role="tablist">
+              <button type="button" class="ow-col-tab tab-progress active" data-col="progress">
+                <span>ProgressNote</span>
+              </button>
+              <button type="button" class="ow-col-tab tab-daily" data-col="D">
+                <span>Daily</span>
+                <span class="badge-pill badge-order-pt" id="badge-count-D">0</span>
+              </button>
+              <button type="button" class="ow-col-tab tab-continue" data-col="C">
+                <span>Continue</span>
+                <span class="badge-pill badge-active-pt" id="badge-count-C">0</span>
+              </button>
+            </div>
+
+            <!-- Modal Body (3 Sections) -->
+            <div class="order-writer-body">
+              <!-- SECTION 1: Progress Note (SOAP) -->
+              <section id="ow-section-progress" class="ow-pane active">
+                <div class="ow-pane-header">
+                  <span class="ow-pane-tag progress">ProgressNote</span>
+                </div>
+
+                <div class="form-group mb-2">
+                  <label for="soap-title">หัวข้อ (Topic / Title)</label>
+                  <input type="text" id="soap-title" class="form-control" placeholder="เช่น Post-op day 1, Round เช้า, ไข้สูง" />
+                </div>
+
+                <div class="soap-grid">
+                  <div class="form-group">
+                    <label for="soap-s"><strong>S (Subjective)</strong> — อาการที่ผู้ป่วยบอกเล่า</label>
+                    <textarea id="soap-s" class="form-control" rows="2" placeholder="เช่น ไม่มีไข้ ปวดแผลลดลง กินอาหารได้"></textarea>
+                  </div>
+
+                  <div class="form-group">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                      <label for="soap-o" style="margin-bottom:0;"><strong>O (Objective)</strong> — การตรวจร่างกาย / V/S / ผล Lab</label>
+                      <button type="button" id="soap-insert-vs-btn" class="btn btn-outline btn-xs" style="font-size:0.75rem; padding:2px 8px;">
+                        + แทรก Vital Signs ล่าสุด
+                      </button>
+                    </div>
+                    <textarea id="soap-o" class="form-control" rows="3" placeholder="เช่น Alert, Soft not tender, V/S ปกติ"></textarea>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="soap-a"><strong>A (Assessment)</strong> — การวินิจฉัย / การประเมินทางคลินิก</label>
+                    <textarea id="soap-a" class="form-control" rows="2" placeholder="เช่น Post-op day 1 recovering well"></textarea>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="soap-p"><strong>P (Plan)</strong> — แผนการรักษาต่อเนื่อง</label>
+                    <textarea id="soap-p" class="form-control" rows="2" placeholder="เช่น Step down diet, continue antibiotic as order"></textarea>
+                  </div>
+                </div>
+              </section>
+
+              <!-- SECTION 2: Daily Order (col = 'D') -->
+              <section id="ow-section-D" class="ow-pane">
+                <div class="ow-pane-header">
+                  <span class="ow-pane-tag oneday">Daily</span>
+                </div>
+
+                <!-- Fast Search Bar -->
+                <div class="ow-search-box">
+                  <div class="input-icon-wrap">
+                    <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="11" cy="11" r="8"/>
+                      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <input type="text" id="ow-search-D" class="form-control" placeholder="ค้นหายา, Lab, X-Ray, อาหาร, Consult หรือพิมพ์คำสั่งแล้วกดเพิ่ม" autocomplete="off" />
+                  </div>
+                  <div id="ow-found-D" class="ow-autocomplete-dropdown hidden"></div>
+                </div>
+
+                <!-- Quick Category Buttons -->
+                <div class="ow-quick-kinds">
+                  <span class="ow-quick-label">หรือเพิ่มตามหมวด:</span>
+                  <button type="button" class="btn-ow-kind" data-col="D" data-kind="med">💊 ยา</button>
+                  <button type="button" class="btn-ow-kind" data-col="D" data-kind="lab">🧪 Lab</button>
+                  <button type="button" class="btn-ow-kind" data-col="D" data-kind="xray">🩻 X-Ray</button>
+                  <button type="button" class="btn-ow-kind" data-col="D" data-kind="diet">🥣 อาหาร</button>
+                  <button type="button" class="btn-ow-kind" data-col="D" data-kind="consult">🩺 Consult</button>
+                  <button type="button" class="btn-ow-kind" data-col="D" data-kind="text">📝 คำสั่งอื่น</button>
+                </div>
+
+                <!-- Items List for Daily -->
+                <div id="ow-list-D" class="ow-items-list">
+                  <div class="ow-empty-notice">- ยังไม่มีรายการ Daily Order -</div>
+                </div>
+              </section>
+
+              <!-- SECTION 3: Continue Order (col = 'C') -->
+              <section id="ow-section-C" class="ow-pane">
+                <div class="ow-pane-header">
+                  <span class="ow-pane-tag continue">Continue</span>
+                </div>
+
+                <!-- Fast Search Bar -->
+                <div class="ow-search-box">
+                  <div class="input-icon-wrap">
+                    <svg class="input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="11" cy="11" r="8"/>
+                      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <input type="text" id="ow-search-C" class="form-control" placeholder="ค้นหายา, อาหาร, คำสั่งต่อเนื่อง หรือพิมพ์แล้วกดเพิ่ม" autocomplete="off" />
+                  </div>
+                  <div id="ow-found-C" class="ow-autocomplete-dropdown hidden"></div>
+                </div>
+
+                <!-- Quick Category Buttons -->
+                <div class="ow-quick-kinds">
+                  <span class="ow-quick-label">หรือเพิ่มตามหมวด:</span>
+                  <button type="button" class="btn-ow-kind" data-col="C" data-kind="med">💊 ยาต่อเนื่อง</button>
+                  <button type="button" class="btn-ow-kind" data-col="C" data-kind="diet">🥣 อาหาร</button>
+                  <button type="button" class="btn-ow-kind" data-col="C" data-kind="text">📝 คำสั่งอื่น/การพยาบาล</button>
+                </div>
+
+                <!-- Items List for Continuous -->
+                <div id="ow-list-C" class="ow-items-list">
+                  <div class="ow-empty-notice">- ยังไม่มีรายการ Continuous Order -</div>
+                </div>
+              </section>
+            </div>
+
+            <!-- Item Detail Form Drawer / Dialog (for Med / Consult / Lab options) -->
+            <div id="ow-item-form-drawer" class="ow-item-drawer hidden">
+              <div class="ow-drawer-card">
+                <div class="ow-drawer-head">
+                  <h4 id="ow-drawer-title">ระบุรายละเอียดคำสั่ง</h4>
+                  <button type="button" id="ow-drawer-close-btn" class="modal-close-btn sm" aria-label="ปิด">✕</button>
+                </div>
+                <div id="ow-drawer-body" class="ow-drawer-body">
+                  <!-- Form inputs dynamically injected -->
+                </div>
+                <div class="ow-drawer-foot">
+                  <button type="button" id="ow-drawer-cancel-btn" class="btn btn-secondary btn-sm">ยกเลิก</button>
+                  <button type="button" id="ow-drawer-confirm-btn" class="btn btn-primary btn-sm">ตกลงเพิ่มรายการ</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Modal Footer (Master Note & Action Buttons) -->
+            <footer class="order-writer-footer">
+              <div class="ow-footer-left">
+                <input type="text" id="ow-master-note" class="form-control" placeholder="หมายเหตุคำสั่งการรักษาใบนี้ (ไม่บังคับ)" />
+              </div>
+              <div class="ow-footer-right">
+                <span id="ow-summary-text" class="ow-summary-tag">0 รายการ</span>
+                <button type="button" id="ow-cancel-btn" class="btn btn-secondary">ยกเลิก</button>
+                <button type="button" id="ow-submit-btn" class="btn btn-success">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/>
+                    <polyline points="7 3 7 8 15 8"/>
+                  </svg>
+                  <span>บันทึกคำสั่งแพทย์</span>
+                </button>
+              </div>
+            </footer>
+          </div>
+        </div>
       </div>
     </div>
 
-    <script src="/app.js?v=3"></script>
+    <script src="/app.js?v=7"></script>
   </body>
 </html>

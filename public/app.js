@@ -18,6 +18,17 @@
     orderCategoryFilter: 'all',
     orderSearchQuery: '',
     showAllWardChips: false,
+
+    // Order Writer State (+Order)
+    orderWriter: {
+      activeCol: 'progress', // 'progress', 'D', 'C'
+      soap: { title: '', s: '', o: '', a: '', p: '' },
+      items: [], // [{ kind: 'med'|'lab'|'xray'|'diet'|'consult'|'text', type: 'D'|'C', label, ... }]
+      note: '',
+      meta: null, // { usages, freqs, spclties, reasons, neededs, labPriorities, xrayPriorities }
+      currentDrawerDraft: null,
+      editingIndex: null
+    }
   };
 
   // DOM Elements
@@ -83,6 +94,36 @@
     emrMenuTabs: document.getElementById('emr-menu-tabs'),
     emrLoading: document.getElementById('emr-loading'),
     emrContentContainer: document.getElementById('emr-content-container'),
+
+    // Create Order Modal Elements (+Order)
+    openCreateOrderBtn: document.getElementById('open-create-order-btn'),
+    createOrderModal: document.getElementById('create-order-modal'),
+    closeOrderModalBtn: document.getElementById('close-order-modal-btn'),
+    orderModalPatientInfo: document.getElementById('order-modal-patient-info'),
+    owPatientStrip: document.getElementById('ow-patient-strip'),
+    owErrorBanner: document.getElementById('ow-error-banner'),
+    soapTitle: document.getElementById('soap-title'),
+    soapS: document.getElementById('soap-s'),
+    soapO: document.getElementById('soap-o'),
+    soapA: document.getElementById('soap-a'),
+    soapP: document.getElementById('soap-p'),
+    soapInsertVsBtn: document.getElementById('soap-insert-vs-btn'),
+    owSearchD: document.getElementById('ow-search-D'),
+    owFoundD: document.getElementById('ow-found-D'),
+    owListD: document.getElementById('ow-list-D'),
+    owSearchC: document.getElementById('ow-search-C'),
+    owFoundC: document.getElementById('ow-found-C'),
+    owListC: document.getElementById('ow-list-C'),
+    owMasterNote: document.getElementById('ow-master-note'),
+    owSummaryText: document.getElementById('ow-summary-text'),
+    owCancelBtn: document.getElementById('ow-cancel-btn'),
+    owSubmitBtn: document.getElementById('ow-submit-btn'),
+    owItemFormDrawer: document.getElementById('ow-item-form-drawer'),
+    owDrawerTitle: document.getElementById('ow-drawer-title'),
+    owDrawerBody: document.getElementById('ow-drawer-body'),
+    owDrawerCloseBtn: document.getElementById('ow-drawer-close-btn'),
+    owDrawerCancelBtn: document.getElementById('ow-drawer-cancel-btn'),
+    owDrawerConfirmBtn: document.getElementById('ow-drawer-confirm-btn'),
   };
 
   // ==================== HELPERS ====================
@@ -339,9 +380,11 @@
     const wardsWithPatients = state.wards.filter(w => w.active_patients > 0 || w.total_patients > 0);
     const listToShow = state.showAllWardChips ? state.wards : (wardsWithPatients.length > 0 ? wardsWithPatients : state.wards.slice(0, 15));
 
-    el.toggleAllWardsBtn.textContent = state.showAllWardChips
-      ? `แสดงเฉพาะวอร์ดที่มีผู้ป่วย (${wardsWithPatients.length})`
-      : `แสดงหอผู้ป่วยทั้งหมด (${state.wards.length})`;
+    if (el.toggleAllWardsBtn) {
+      el.toggleAllWardsBtn.textContent = state.showAllWardChips
+        ? `แสดงเฉพาะวอร์ดที่มีผู้ป่วย (${wardsWithPatients.length})`
+        : `แสดงหอผู้ป่วยทั้งหมด (${state.wards.length})`;
+    }
 
     el.wardChipsContainer.classList.toggle('expanded-grid', state.showAllWardChips);
 
@@ -969,7 +1012,6 @@
       const dosePart = item.med_dose ? `${Number(item.med_dose)} ${item.med_unit_name || item.med_usage_unit_code || ''}`.trim() : '';
       const usagePart = item.usage_doctor_text || item.usage_human_text || '';
       const freqPart = item.freq_for_doctors || item.freq_name || item.freq_code || '';
-      const sigLine = [usagePart, dosePart, freqPart].filter(Boolean).join(' • ');
       const thaiSigLine = [item.usage_human_text, dosePart, item.freq_name, item.time_name].filter(Boolean).join(' ');
 
       return `
@@ -983,8 +1025,12 @@
           </div>
           <div class="oi-title">${escapeHtml(medTitle)}</div>
           <div class="oi-med-sig">
-            ${sigLine ? `<div class="oi-med-dose-line">${escapeHtml(sigLine)}</div>` : ''}
-            ${thaiSigLine && thaiSigLine !== sigLine ? `<div>${escapeHtml(thaiSigLine)}</div>` : ''}
+            <div class="oi-med-badges-wrap">
+              ${dosePart ? `<span class="oi-med-pill dose">${escapeHtml(dosePart)}</span>` : ''}
+              ${usagePart ? `<span class="oi-med-pill route">${escapeHtml(usagePart)}</span>` : ''}
+              ${freqPart ? `<span class="oi-med-pill freq">${escapeHtml(freqPart)}</span>` : ''}
+            </div>
+            ${thaiSigLine ? `<div class="oi-med-thai-desc">${escapeHtml(thaiSigLine)}</div>` : ''}
             ${item.med_note || item.other ? `<div class="oi-subtext">หมายเหตุ: ${escapeHtml(item.med_note || item.other)}</div>` : ''}
             ${item.off_date ? `<div style="color:var(--danger); font-weight:600; font-size:0.78rem;">Off เมื่อ: ${escapeHtml(formatThaiDate(item.off_date))} ${escapeHtml(formatTimeShort(item.off_time))}</div>` : ''}
           </div>
@@ -2749,6 +2795,918 @@
           renderActiveEmrTabContent();
         });
       });
+    }
+
+    // +Order popup modal bindings
+    if (el.openCreateOrderBtn) {
+      el.openCreateOrderBtn.addEventListener('click', () => {
+        openOrderWriterModal();
+      });
+    }
+
+    if (el.closeOrderModalBtn) {
+      el.closeOrderModalBtn.addEventListener('click', closeOrderWriterModal);
+    }
+    if (el.owCancelBtn) {
+      el.owCancelBtn.addEventListener('click', closeOrderWriterModal);
+    }
+
+    // Column switch tabs (Progress Note, One Day, Continue)
+    document.querySelectorAll('.ow-col-tab').forEach(tabBtn => {
+      tabBtn.addEventListener('click', () => {
+        const targetCol = tabBtn.getAttribute('data-col');
+        switchOrderWriterCol(targetCol);
+      });
+    });
+
+    // Insert Latest V/S into SOAP O
+    if (el.soapInsertVsBtn) {
+      el.soapInsertVsBtn.addEventListener('click', () => {
+        insertLatestVsIntoSoap();
+      });
+    }
+
+    // Fast search inputs for D and C
+    setupOwSearchInput('D', el.owSearchD, el.owFoundD);
+    setupOwSearchInput('C', el.owSearchC, el.owFoundC);
+
+    // Quick category buttons (+ยา, +Lab, etc.)
+    document.querySelectorAll('.btn-ow-kind').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const col = btn.getAttribute('data-col') || 'D';
+        const kind = btn.getAttribute('data-kind') || 'text';
+        openDrawerForNewKind(col, kind);
+      });
+    });
+
+    // Drawer cancel and close
+    if (el.owDrawerCloseBtn) el.owDrawerCloseBtn.addEventListener('click', closeDrawer);
+    if (el.owDrawerCancelBtn) el.owDrawerCancelBtn.addEventListener('click', closeDrawer);
+    if (el.owDrawerConfirmBtn) el.owDrawerConfirmBtn.addEventListener('click', confirmDrawerItem);
+
+    // Submit order button
+    if (el.owSubmitBtn) {
+      el.owSubmitBtn.addEventListener('click', submitDoctorOrder);
+    }
+  }
+
+  // ==================== ORDER WRITER (+ORDER) FUNCTIONS ====================
+  async function loadOrderMetaIfNeeded() {
+    if (!state.orderWriter.meta) {
+      try {
+        const data = await apiFetch('/api/order-meta?kind=meta');
+        state.orderWriter.meta = data;
+      } catch (err) {
+        console.warn('Failed to load order meta:', err.message);
+      }
+    }
+  }
+
+  function openOrderWriterModal() {
+    if (!state.currentPatientData || !state.currentPatientData.patient) {
+      alert('กรุณาเลือกผู้ป่วยก่อนเปิดเขียนคำสั่งการรักษา');
+      return;
+    }
+
+    const pt = state.currentPatientData.patient;
+    const allergies = state.currentPatientData.allergies || [];
+    const vitals = state.currentPatientData.vitals || [];
+
+    // Reset order writer state
+    state.orderWriter.activeCol = 'progress';
+    state.orderWriter.soap = { title: '', s: '', o: '', a: '', p: '' };
+    state.orderWriter.items = [];
+    state.orderWriter.note = '';
+    state.orderWriter.editingIndex = null;
+    state.orderWriter.currentDrawerDraft = null;
+
+    if (el.soapTitle) el.soapTitle.value = '';
+    if (el.soapS) el.soapS.value = '';
+    if (el.soapO) el.soapO.value = '';
+    if (el.soapA) el.soapA.value = '';
+    if (el.soapP) el.soapP.value = '';
+    if (el.owMasterNote) el.owMasterNote.value = '';
+    if (el.owSearchD) el.owSearchD.value = '';
+    if (el.owSearchC) el.owSearchC.value = '';
+    if (el.owErrorBanner) el.owErrorBanner.classList.add('hidden');
+
+    // Header info (only HN and AN, patient name and bed are shown below in the strip)
+    if (el.orderModalPatientInfo) {
+      el.orderModalPatientInfo.textContent = `HN: ${pt.hn || '-'} • AN: ${pt.an || '-'}`;
+    }
+
+    // Quick strip
+    const allergyList = [];
+    if (pt.drugallergy) allergyList.push(pt.drugallergy);
+    allergies.forEach(a => {
+      const s = `${a.agent || ''}${a.symptom ? ` (${a.symptom})` : ''}`.trim();
+      if (s && !allergyList.includes(s)) allergyList.push(s);
+    });
+
+    if (el.owPatientStrip) {
+      el.owPatientStrip.innerHTML = `
+        <span class="ow-strip-chip">
+          <strong>ผู้ป่วย:</strong> ${escapeHtml(pt.fullname || '-')} (${calculateAgeText(pt.birthday)})
+        </span>
+        <span class="ow-strip-chip">
+          <strong>เตียง:</strong> ${escapeHtml(pt.bed_no || '-')}
+        </span>
+        <span class="ow-strip-chip">
+          <strong>Dx:</strong> ${escapeHtml(pt.prediag || pt.provision_dx || pt.admit_for || '-')}
+        </span>
+        <span class="ow-strip-chip ${allergyList.length > 0 ? 'allergy' : ''}">
+          <strong>แพ้ยา:</strong> ${allergyList.length > 0 ? escapeHtml(allergyList.join(', ')) : 'ไม่มีประวัติ'}
+        </span>
+      `;
+    }
+
+    switchOrderWriterCol('progress');
+    renderOrderWriterItemsList();
+    updateOrderWriterSummary();
+
+    if (el.createOrderModal) {
+      el.createOrderModal.classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+    }
+
+    loadOrderMetaIfNeeded();
+  }
+
+  function closeOrderWriterModal() {
+    if (el.createOrderModal) {
+      el.createOrderModal.classList.add('hidden');
+      document.body.style.overflow = '';
+    }
+    closeDrawer();
+  }
+
+  function switchOrderWriterCol(colKey) {
+    state.orderWriter.activeCol = colKey;
+
+    document.querySelectorAll('.ow-col-tab').forEach(tab => {
+      tab.classList.toggle('active', tab.getAttribute('data-col') === colKey);
+    });
+
+    document.querySelectorAll('.ow-pane').forEach(pane => {
+      pane.classList.remove('active');
+    });
+
+    const targetPane = document.getElementById(`ow-section-${colKey}`);
+    if (targetPane) targetPane.classList.add('active');
+  }
+
+  function insertLatestVsIntoSoap() {
+    if (!state.currentPatientData) return;
+    const vitals = state.currentPatientData.vitals || [];
+    if (!vitals.length) {
+      alert('ยังไม่มีข้อมูลสัญญาณชีพของผู้ป่วยรายนี้');
+      return;
+    }
+
+    const latest = {};
+    vitals.forEach(v => {
+      const id = Number(v.vitalsign_item_id);
+      if (!latest[id] && v.value) latest[id] = v;
+    });
+
+    const parts = [];
+    if (latest[1]) parts.push(`BT ${latest[1].value} °C`);
+    if (latest[2]) parts.push(`PR ${latest[2].value} /min`);
+    if (latest[3]) parts.push(`RR ${latest[3].value} /min`);
+    if (latest[4] || latest[5]) {
+      const s = latest[4] ? latest[4].value : '-';
+      const d = latest[5] ? latest[5].value : '-';
+      parts.push(`BP ${s}/${d} mmHg`);
+    }
+    if (latest[7]) parts.push(`SpO2 ${latest[7].value}%`);
+
+    if (parts.length > 0) {
+      const vsLine = `V/S: ${parts.join(', ')}`;
+      const currentO = (el.soapO ? el.soapO.value : '').trim();
+      if (el.soapO) {
+        el.soapO.value = currentO ? `${currentO}\n${vsLine}` : vsLine;
+      }
+    }
+  }
+
+  function setupOwSearchInput(col, inputEl, dropdownEl) {
+    if (!inputEl || !dropdownEl) return;
+    let debounceTimer = null;
+
+    inputEl.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      const q = inputEl.value.trim();
+      if (q.length < 2) {
+        dropdownEl.classList.add('hidden');
+        dropdownEl.innerHTML = '';
+        return;
+      }
+
+      debounceTimer = setTimeout(async () => {
+        try {
+          const res = await apiFetch(`/api/order-meta?q=${encodeURIComponent(q)}&kind=all`);
+          const items = res.items || [];
+          if (!items.length) {
+            dropdownEl.innerHTML = `
+              <div class="ow-search-item" data-action="custom-text">
+                <div class="item-main">
+                  <span class="item-kind-badge" style="background:#e2e8f0; color:#334155;">คำสั่งอื่น</span>
+                  <span>กด Enter เพื่อเพิ่ม <strong>"${escapeHtml(q)}"</strong></span>
+                </div>
+              </div>
+            `;
+          } else {
+            dropdownEl.innerHTML = items.map(it => `
+              <div class="ow-search-item" data-kind="${it.kind}" data-id="${it.id}" data-label="${escapeHtml(it.label)}" data-unit="${escapeHtml(it.unit || '')}">
+                <div class="item-main">
+                  <span class="item-kind-badge ${getKindBadgeClass(it.kind)}">${getKindTitle(it.kind)}</span>
+                  <span>${escapeHtml(it.label)}</span>
+                </div>
+                ${it.sub ? `<span class="item-sub">${escapeHtml(it.sub)}</span>` : ''}
+              </div>
+            `).join('');
+          }
+          dropdownEl.classList.remove('hidden');
+
+          dropdownEl.querySelectorAll('.ow-search-item').forEach(row => {
+            row.addEventListener('click', () => {
+              const action = row.getAttribute('data-action');
+              if (action === 'custom-text') {
+                addQuickTextOrder(col, q);
+              } else {
+                const kind = row.getAttribute('data-kind');
+                const id = row.getAttribute('data-id');
+                const label = row.getAttribute('data-label');
+                const unit = row.getAttribute('data-unit');
+                chooseSearchResult(col, kind, id, label, unit);
+              }
+              dropdownEl.classList.add('hidden');
+              inputEl.value = '';
+            });
+          });
+        } catch (err) {
+          console.warn('Search meta error:', err);
+        }
+      }, 250);
+    });
+
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const q = inputEl.value.trim();
+        if (q) {
+          addQuickTextOrder(col, q);
+          dropdownEl.classList.add('hidden');
+          inputEl.value = '';
+        }
+      } else if (e.key === 'Escape') {
+        dropdownEl.classList.add('hidden');
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!inputEl.contains(e.target) && !dropdownEl.contains(e.target)) {
+        dropdownEl.classList.add('hidden');
+      }
+    });
+  }
+
+  function getKindBadgeClass(kind) {
+    switch (kind) {
+      case 'med': return 'badge-order-pt';
+      case 'lab': return 'badge-muted';
+      case 'xray': return 'badge-active-pt';
+      case 'diet': return 'badge-muted';
+      case 'consult': return 'badge-order-pt';
+      default: return 'badge-muted';
+    }
+  }
+
+  function getKindTitle(kind) {
+    switch (kind) {
+      case 'med': return '💊 ยา';
+      case 'lab': return '🧪 Lab';
+      case 'xray': return '🩻 X-Ray';
+      case 'diet': return '🥣 อาหาร';
+      case 'consult': return '🩺 Consult';
+      default: return '📝 คำสั่ง';
+    }
+  }
+
+  function addQuickTextOrder(col, text) {
+    state.orderWriter.items.push({
+      kind: 'text',
+      type: col,
+      type_id: 8,
+      text: text,
+      label: text
+    });
+    renderOrderWriterItemsList();
+    updateOrderWriterSummary();
+  }
+
+  async function chooseSearchResult(col, kind, id, label, unit) {
+    await loadOrderMetaIfNeeded();
+    if (kind === 'med') {
+      await openDrawerForMed(col, { drug_item_id: id, label, unit, dose: '', drug_usage_code_id: '', frequency_code_id: '', qty: '', note: '' });
+    } else if (kind === 'consult') {
+      openDrawerForConsult(col, { spclty_id: id, label });
+    } else if (kind === 'lab') {
+      state.orderWriter.items.push({ kind: 'lab', type: col, lab_set_id: id, label: `Lab: ${label}`, priority: 1 });
+      renderOrderWriterItemsList();
+      updateOrderWriterSummary();
+    } else if (kind === 'xray') {
+      state.orderWriter.items.push({ kind: 'xray', type: col, xray_set_id: id, label: `X-ray: ${label}`, priority: 1 });
+      renderOrderWriterItemsList();
+      updateOrderWriterSummary();
+    } else if (kind === 'diet') {
+      state.orderWriter.items.push({ kind: 'diet', type: col, diet_id: id, label: `Diet: ${label}` });
+      renderOrderWriterItemsList();
+      updateOrderWriterSummary();
+    }
+  }
+
+  function openDrawerForNewKind(col, kind) {
+    if (kind === 'text') {
+      openDrawerForText(col, { text: '', type_id: 8 });
+    } else if (kind === 'consult') {
+      openDrawerForConsult(col, {});
+    } else {
+      // Prompt search or custom item
+      openDrawerWithSearch(col, kind);
+    }
+  }
+
+  function openDrawerWithSearch(col, kind) {
+    const metaTitle = getKindTitle(kind);
+    el.owDrawerTitle.textContent = `เลือกรายการ ${metaTitle} (${col === 'C' ? 'Continuous' : 'One Day'})`;
+
+    el.owDrawerBody.innerHTML = `
+      <div class="form-group">
+        <label>พิมพ์ค้นหาชื่อ ${metaTitle}</label>
+        <input type="text" id="drawer-search-q" class="form-control" placeholder="พิมพ์ชื่ออย่างน้อย 2 ตัวอักษร..." autofocus />
+      </div>
+      <div id="drawer-search-results" class="ow-items-list" style="max-height:220px; overflow-y:auto;"></div>
+    `;
+
+    el.owItemFormDrawer.classList.remove('hidden');
+
+    const searchInput = document.getElementById('drawer-search-q');
+    const resultsBox = document.getElementById('drawer-search-results');
+    let timer = null;
+
+    searchInput.addEventListener('input', () => {
+      clearTimeout(timer);
+      const q = searchInput.value.trim();
+      if (q.length < 2) {
+        resultsBox.innerHTML = '';
+        return;
+      }
+      timer = setTimeout(async () => {
+        try {
+          const res = await apiFetch(`/api/order-meta?q=${encodeURIComponent(q)}&kind=${kind}`);
+          const items = res.items || [];
+          if (!items.length) {
+            resultsBox.innerHTML = `<div class="ow-empty-notice">ไม่พบรายการ "${escapeHtml(q)}"</div>`;
+          } else {
+            resultsBox.innerHTML = items.map(it => `
+              <button type="button" class="btn btn-outline" style="text-align:left; justify-content:space-between; padding:8px 12px; margin-bottom:4px;" data-id="${it.id}" data-label="${escapeHtml(it.label)}" data-unit="${escapeHtml(it.unit || '')}">
+                <strong>${escapeHtml(it.label)}</strong>
+                ${it.sub ? `<small style="color:var(--text-muted);">${escapeHtml(it.sub)}</small>` : ''}
+              </button>
+            `).join('');
+
+            resultsBox.querySelectorAll('button').forEach(btn => {
+              btn.addEventListener('click', () => {
+                const id = btn.getAttribute('data-id');
+                const label = btn.getAttribute('data-label');
+                const unit = btn.getAttribute('data-unit');
+                chooseSearchResult(col, kind, id, label, unit);
+                closeDrawer();
+              });
+            });
+          }
+        } catch (err) {
+          console.warn(err);
+        }
+      }, 250);
+    });
+  }
+
+  async function openDrawerForMed(col, medItem, editIndex = null) {
+    await loadOrderMetaIfNeeded();
+
+    state.orderWriter.currentDrawerDraft = { kind: 'med', type: col, ...medItem };
+    state.orderWriter.editingIndex = editIndex;
+
+    const meta = state.orderWriter.meta || {};
+    const usages = meta.usages || [];
+    const freqs = meta.freqs || [];
+
+    el.owDrawerTitle.textContent = `${editIndex !== null ? 'แก้ไข' : 'ระบุขนาดและวิธีใช้'} ยา: ${medItem.label || ''}`;
+
+    let selectedUsageId = String(medItem.drug_usage_code_id || '');
+    let selectedFreqId = String(medItem.frequency_code_id || '');
+
+    el.owDrawerBody.innerHTML = `
+      <div class="form-group">
+        <label><strong>ชื่อยา:</strong></label>
+        <div style="font-weight:700; color:var(--primary); font-size:1rem;">${escapeHtml(medItem.label || '-')}</div>
+      </div>
+      <div class="form-group">
+        <label for="drawer-med-dose">Dose ${medItem.unit ? `(${escapeHtml(medItem.unit)})` : ''} <span class="text-danger">*</span></label>
+        <input type="text" id="drawer-med-dose" class="form-control" value="${escapeHtml(medItem.dose || '')}" placeholder="เช่น 1, 500, 0.5" />
+      </div>
+
+      <!-- Searchable Route (วิธีใช้) -->
+      <div class="form-group">
+        <label for="drawer-med-usage">วิธีใช้ (Route) <span class="text-danger">*</span></label>
+        <div class="ow-select-search-wrap">
+          <input type="text" id="drawer-usage-filter" class="form-control form-control-sm ow-filter-input" placeholder="🔍 ค้นหาวิธีใช้ เช่น po, iv, oral, ทา..." autocomplete="off" />
+          <select id="drawer-med-usage" class="form-control" size="4" style="height:115px; margin-top:4px;">
+          </select>
+        </div>
+      </div>
+
+      <!-- Searchable Frequency (ความถี่) -->
+      <div class="form-group">
+        <label for="drawer-med-freq">ความถี่ (Frequency) <span class="text-danger">*</span></label>
+        <div class="ow-select-search-wrap">
+          <input type="text" id="drawer-freq-filter" class="form-control form-control-sm ow-filter-input" placeholder="🔍 ค้นหาความถี่ เช่น tid, bid, od, q 8 hr..." autocomplete="off" />
+          <select id="drawer-med-freq" class="form-control" size="4" style="height:115px; margin-top:4px;">
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="drawer-med-qty">จำนวน (Qty)</label>
+        <input type="number" id="drawer-med-qty" class="form-control" value="${escapeHtml(medItem.qty || '')}" placeholder="ไม่บังคับ" />
+      </div>
+      <div class="form-group">
+        <label for="drawer-med-note">หมายเหตุ / คำแนะนำเพิ่มเติม</label>
+        <input type="text" id="drawer-med-note" class="form-control" value="${escapeHtml(medItem.note || '')}" placeholder="เช่น prn for pain q 4-6 hr" />
+      </div>
+    `;
+
+    const usageSelect = document.getElementById('drawer-med-usage');
+    const usageFilterInput = document.getElementById('drawer-usage-filter');
+    const freqSelect = document.getElementById('drawer-med-freq');
+    const freqFilterInput = document.getElementById('drawer-freq-filter');
+
+    // Dynamic renderer for Route (วิธีใช้)
+    function renderUsageOptions(query = '') {
+      if (!usageSelect) return;
+      const q = query.trim().toLowerCase();
+      let filtered = usages;
+      if (q) {
+        filtered = usages.filter(u => {
+          const haystack = [
+            u.route_code,
+            u.usage_code,
+            u.raw_code,
+            u.doctor_text,
+            u.human_text,
+            u.usage_label
+          ].filter(Boolean).join(' ').toLowerCase();
+          return haystack.includes(q);
+        });
+      }
+
+      let list = filtered.slice();
+      if (selectedUsageId && !list.some(u => String(u.id) === selectedUsageId)) {
+        const found = usages.find(u => String(u.id) === selectedUsageId);
+        if (found) list.unshift(found);
+      }
+
+      usageSelect.innerHTML = `
+        <option value="">- เลือกวิธีใช้ (${filtered.length} รายการ) -</option>
+        ${list.map(u => {
+          const isSel = String(u.id) === selectedUsageId;
+          const label = u.usage_label || `${u.usage_code || ''} ${u.doctor_text ? `• ${u.doctor_text}` : ''}`;
+          return `<option value="${u.id}" ${isSel ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+        }).join('')}
+      `;
+    }
+
+    // Dynamic renderer for Frequency (ความถี่)
+    function renderFreqOptions(query = '') {
+      if (!freqSelect) return;
+      const q = query.trim().toLowerCase();
+      let filtered = freqs;
+      if (q) {
+        filtered = freqs.filter(f => {
+          const haystack = [
+            f.freq_code,
+            f.raw_code,
+            f.freq_for_doctors,
+            f.freq_name
+          ].filter(Boolean).join(' ').toLowerCase();
+          return haystack.includes(q);
+        });
+      }
+
+      let list = filtered.slice();
+      if (selectedFreqId && !list.some(f => String(f.id) === selectedFreqId)) {
+        const found = freqs.find(f => String(f.id) === selectedFreqId);
+        if (found) list.unshift(found);
+      }
+
+      freqSelect.innerHTML = `
+        <option value="">- เลือกความถี่ (${filtered.length} รายการ) -</option>
+        ${list.map(f => {
+          const isSel = String(f.id) === selectedFreqId;
+          const mainTitle = f.freq_code || f.raw_code || '';
+          const subTitle = f.freq_name || f.freq_for_doctors || '';
+          const codeTag = f.raw_code && f.raw_code !== f.freq_code ? ` [${f.raw_code}]` : '';
+          return `<option value="${f.id}" ${isSel ? 'selected' : ''}>${escapeHtml(mainTitle)}${subTitle ? ` • ${escapeHtml(subTitle)}` : ''}${codeTag}</option>`;
+        }).join('')}
+      `;
+    }
+
+    if (usageSelect && usageFilterInput) {
+      usageSelect.addEventListener('change', () => {
+        selectedUsageId = usageSelect.value;
+      });
+      usageFilterInput.addEventListener('input', () => {
+        renderUsageOptions(usageFilterInput.value);
+      });
+      renderUsageOptions('');
+    }
+
+    if (freqSelect && freqFilterInput) {
+      freqSelect.addEventListener('change', () => {
+        selectedFreqId = freqSelect.value;
+      });
+      freqFilterInput.addEventListener('input', () => {
+        renderFreqOptions(freqFilterInput.value);
+      });
+      renderFreqOptions('');
+    }
+
+    el.owItemFormDrawer.classList.remove('hidden');
+  }
+
+  function openDrawerForConsult(col, consultItem, editIndex = null) {
+    state.orderWriter.currentDrawerDraft = { kind: 'consult', type: col, ...consultItem };
+    state.orderWriter.editingIndex = editIndex;
+
+    const meta = state.orderWriter.meta || {};
+    const spclties = meta.spclties || [];
+    const reasons = meta.reasons || [];
+    const neededs = meta.neededs || [];
+
+    el.owDrawerTitle.textContent = `${editIndex !== null ? 'แก้ไข' : 'เพิ่ม'} ใบปรึกษา (Consult)`;
+
+    el.owDrawerBody.innerHTML = `
+      <div class="form-group">
+        <label for="drawer-consult-spclty">สาขาที่ต้องการปรึกษา <span class="text-danger">*</span></label>
+        <select id="drawer-consult-spclty" class="form-control">
+          <option value="">- เลือกสาขาการแพทย์ -</option>
+          ${spclties.map(s => `
+            <option value="${s.id}" ${String(s.id) === String(consultItem.spclty_id) ? 'selected' : ''}>${escapeHtml(s.name)}</option>
+          `).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="drawer-consult-reason">เหตุผลในการปรึกษา</label>
+        <select id="drawer-consult-reason" class="form-control">
+          <option value="">- เลือกเหตุผล -</option>
+          ${reasons.map(r => `
+            <option value="${r.id}" ${String(r.id) === String(consultItem.reason_id) ? 'selected' : ''}>${escapeHtml(r.text)}</option>
+          `).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="drawer-consult-needed">ความต้องการ</label>
+        <select id="drawer-consult-needed" class="form-control">
+          <option value="">- เลือกความต้องการ -</option>
+          ${neededs.map(n => `
+            <option value="${n.id}" ${String(n.id) === String(consultItem.needed_id) ? 'selected' : ''}>${escapeHtml(n.text)}</option>
+          `).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="drawer-consult-diag">Clinical diagnosis</label>
+        <input type="text" id="drawer-consult-diag" class="form-control" value="${escapeHtml(consultItem.diag || '')}" placeholder="การวินิจฉัยโรค" />
+      </div>
+      <div class="form-group">
+        <label for="drawer-consult-note">Clinical information / ข้อมูลทางคลินิก</label>
+        <textarea id="drawer-consult-note" class="form-control" rows="3" placeholder="ระบุอาการสำคัญ ประวัติ และคำถามที่ต้องการปรึกษา">${escapeHtml(consultItem.note || '')}</textarea>
+      </div>
+    `;
+
+    el.owItemFormDrawer.classList.remove('hidden');
+  }
+
+  function openDrawerForText(col, textItem, editIndex = null) {
+    state.orderWriter.currentDrawerDraft = { kind: 'text', type: col, ...textItem };
+    state.orderWriter.editingIndex = editIndex;
+
+    el.owDrawerTitle.textContent = `${editIndex !== null ? 'แก้ไข' : 'เพิ่ม'} คำสั่งอื่น / กิจกรรมการรักษา`;
+
+    el.owDrawerBody.innerHTML = `
+      <div class="form-group">
+        <label for="drawer-text-type">หมวดคำสั่ง</label>
+        <select id="drawer-text-type" class="form-control">
+          <option value="8" ${Number(textItem.type_id) === 8 ? 'selected' : ''}>Other (คำสั่งทั่วไป)</option>
+          <option value="2" ${Number(textItem.type_id) === 2 ? 'selected' : ''}>Activity (กิจกรรม/การเคลื่อนไหว)</option>
+          <option value="4" ${Number(textItem.type_id) === 4 ? 'selected' : ''}>Record (บันทึก/สังเกตอาการ)</option>
+          <option value="9" ${Number(textItem.type_id) === 9 ? 'selected' : ''}>Operation (ผ่าตัด/หัตถการ)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="drawer-text-desc">ข้อความคำสั่ง <span class="text-danger">*</span></label>
+        <textarea id="drawer-text-desc" class="form-control" rows="3" placeholder="เช่น Record I/O, NPO after midnight, Bed rest, On O2 canula 3 LPM" autofocus>${escapeHtml(textItem.text || '')}</textarea>
+      </div>
+    `;
+
+    el.owItemFormDrawer.classList.remove('hidden');
+  }
+
+  function closeDrawer() {
+    if (el.owItemFormDrawer) el.owItemFormDrawer.classList.add('hidden');
+    state.orderWriter.currentDrawerDraft = null;
+    state.orderWriter.editingIndex = null;
+  }
+
+  function confirmDrawerItem() {
+    const draft = state.orderWriter.currentDrawerDraft;
+    if (!draft) {
+      closeDrawer();
+      return;
+    }
+
+    if (draft.kind === 'med') {
+      const doseEl = document.getElementById('drawer-med-dose');
+      const usageEl = document.getElementById('drawer-med-usage');
+      const freqEl = document.getElementById('drawer-med-freq');
+      const qtyEl = document.getElementById('drawer-med-qty');
+      const noteEl = document.getElementById('drawer-med-note');
+
+      const dose = doseEl ? doseEl.value.trim() : '';
+      const usageId = usageEl ? usageEl.value : '';
+      const freqId = freqEl ? freqEl.value : '';
+      const qty = qtyEl ? qtyEl.value.trim() : '';
+      const note = noteEl ? noteEl.value.trim() : '';
+
+      if (!dose) {
+        alert('กรุณากรอก Dose ของยา');
+        if (doseEl) doseEl.focus();
+        return;
+      }
+      if (!usageId) {
+        alert('กรุณาเลือกวิธีใช้ยา');
+        if (usageEl) usageEl.focus();
+        return;
+      }
+      if (!freqId) {
+        alert('กรุณาเลือกความถี่ในการให้ยา');
+        if (freqEl) freqEl.focus();
+        return;
+      }
+
+      const meta = state.orderWriter.meta || {};
+      const usageObj = (meta.usages || []).find(u => String(u.id) === String(usageId));
+      const freqObj = (meta.freqs || []).find(f => String(f.id) === String(freqId));
+
+      const updated = {
+        ...draft,
+        dose,
+        drug_usage_code_id: usageId,
+        frequency_code_id: freqId,
+        qty: qty || null,
+        note: note || '',
+        sigText: `${dose} ${draft.unit || ''} ${usageObj ? usageObj.usage_code : ''} ${freqObj ? freqObj.freq_code : ''}`.trim()
+      };
+
+      if (state.orderWriter.editingIndex !== null) {
+        state.orderWriter.items[state.orderWriter.editingIndex] = updated;
+      } else {
+        state.orderWriter.items.push(updated);
+      }
+
+    } else if (draft.kind === 'consult') {
+      const spEl = document.getElementById('drawer-consult-spclty');
+      const rsEl = document.getElementById('drawer-consult-reason');
+      const ndEl = document.getElementById('drawer-consult-needed');
+      const dgEl = document.getElementById('drawer-consult-diag');
+      const ntEl = document.getElementById('drawer-consult-note');
+
+      const spcltyId = spEl ? spEl.value : '';
+      if (!spcltyId) {
+        alert('กรุณาเลือกสาขาที่ต้องการปรึกษา');
+        return;
+      }
+
+      const meta = state.orderWriter.meta || {};
+      const spObj = (meta.spclties || []).find(s => String(s.id) === String(spcltyId));
+
+      const updated = {
+        ...draft,
+        spclty_id: spcltyId,
+        reason_id: rsEl ? rsEl.value : '',
+        needed_id: ndEl ? ndEl.value : '',
+        diag: dgEl ? dgEl.value.trim() : '',
+        note: ntEl ? ntEl.value.trim() : '',
+        label: `Consult ${spObj ? spObj.name : ''}`
+      };
+
+      if (state.orderWriter.editingIndex !== null) {
+        state.orderWriter.items[state.orderWriter.editingIndex] = updated;
+      } else {
+        state.orderWriter.items.push(updated);
+      }
+
+    } else if (draft.kind === 'text') {
+      const typeEl = document.getElementById('drawer-text-type');
+      const descEl = document.getElementById('drawer-text-desc');
+      const desc = descEl ? descEl.value.trim() : '';
+
+      if (!desc) {
+        alert('กรุณากรอกข้อความคำสั่ง');
+        return;
+      }
+
+      const updated = {
+        ...draft,
+        type_id: typeEl ? Number(typeEl.value) : 8,
+        text: desc,
+        label: desc
+      };
+
+      if (state.orderWriter.editingIndex !== null) {
+        state.orderWriter.items[state.orderWriter.editingIndex] = updated;
+      } else {
+        state.orderWriter.items.push(updated);
+      }
+    }
+
+    closeDrawer();
+    renderOrderWriterItemsList();
+    updateOrderWriterSummary();
+  }
+
+  function renderOrderWriterItemsList() {
+    const items = state.orderWriter.items;
+    const itemsD = items.map((it, idx) => ({ ...it, origIdx: idx })).filter(it => (it.type || 'D') === 'D');
+    const itemsC = items.map((it, idx) => ({ ...it, origIdx: idx })).filter(it => (it.type || 'D') === 'C');
+
+    // Badge counts
+    const badgeD = document.getElementById('badge-count-D');
+    const badgeC = document.getElementById('badge-count-C');
+    if (badgeD) badgeD.textContent = String(itemsD.length);
+    if (badgeC) badgeC.textContent = String(itemsC.length);
+
+    if (el.owListD) {
+      if (!itemsD.length) {
+        el.owListD.innerHTML = `<div class="ow-empty-notice">- ยังไม่มีรายการ Daily Order -</div>`;
+      } else {
+        el.owListD.innerHTML = itemsD.map(it => renderOrderItemCard(it)).join('');
+      }
+    }
+
+    if (el.owListC) {
+      if (!itemsC.length) {
+        el.owListC.innerHTML = `<div class="ow-empty-notice">- ยังไม่มีรายการ Continue Order -</div>`;
+      } else {
+        el.owListC.innerHTML = itemsC.map(it => renderOrderItemCard(it)).join('');
+      }
+    }
+
+    // Bind action buttons on each item
+    document.querySelectorAll('[data-ow-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.getAttribute('data-ow-action');
+        const idx = Number(btn.getAttribute('data-idx'));
+        if (action === 'delete') {
+          state.orderWriter.items.splice(idx, 1);
+          renderOrderWriterItemsList();
+          updateOrderWriterSummary();
+        } else if (action === 'switch-type') {
+          const cur = state.orderWriter.items[idx];
+          cur.type = (cur.type || 'D') === 'C' ? 'D' : 'C';
+          renderOrderWriterItemsList();
+          updateOrderWriterSummary();
+        } else if (action === 'edit') {
+          editOrderWriterItem(idx);
+        }
+      });
+    });
+  }
+
+  function renderOrderItemCard(it) {
+    const isMed = it.kind === 'med';
+    const subSig = it.sigText || (isMed ? `${it.dose || ''} ${it.unit || ''}` : (it.note || it.text || ''));
+
+    return `
+      <div class="ow-order-item-card">
+        <div class="ow-item-info">
+          <span class="ow-item-badge-tag ${getKindBadgeClass(it.kind)}">${getKindTitle(it.kind)}</span>
+          <div class="ow-item-name">${escapeHtml(it.label || it.text || '')}</div>
+          ${subSig ? `<div class="ow-item-sig">${escapeHtml(subSig)}</div>` : ''}
+          ${it.note && isMed ? `<div class="ow-item-sig" style="color:var(--text-muted);">หมายเหตุ: ${escapeHtml(it.note)}</div>` : ''}
+        </div>
+        <div class="ow-item-actions">
+          <button type="button" class="ow-btn-action" data-ow-action="switch-type" data-idx="${it.origIdx}" title="สลับ Daily / Continue">
+            ${it.type === 'C' ? 'ย้ายเป็น Daily' : 'ย้ายเป็น Continue'}
+          </button>
+          <button type="button" class="ow-btn-action" data-ow-action="edit" data-idx="${it.origIdx}" title="แก้ไขรายการ">
+            แก้ไข
+          </button>
+          <button type="button" class="ow-btn-action del" data-ow-action="delete" data-idx="${it.origIdx}" title="ลบรายการ">
+            ✕
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  function editOrderWriterItem(idx) {
+    const it = state.orderWriter.items[idx];
+    if (!it) return;
+    if (it.kind === 'med') {
+      openDrawerForMed(it.type || 'D', it, idx);
+    } else if (it.kind === 'consult') {
+      openDrawerForConsult(it.type || 'D', it, idx);
+    } else if (it.kind === 'text') {
+      openDrawerForText(it.type || 'D', it, idx);
+    }
+  }
+
+  function updateOrderWriterSummary() {
+    const total = state.orderWriter.items.length;
+    if (el.owSummaryText) {
+      el.owSummaryText.textContent = `รวม ${total} รายการคำสั่ง`;
+    }
+  }
+
+  async function submitDoctorOrder() {
+    if (!state.currentPatientData || !state.currentPatientData.patient) return;
+    const ipdId = state.currentPatientData.patient.ipd_id;
+
+    // Collect SOAP
+    const soap = {
+      title: el.soapTitle ? el.soapTitle.value.trim() : '',
+      s: el.soapS ? el.soapS.value.trim() : '',
+      o: el.soapO ? el.soapO.value.trim() : '',
+      a: el.soapA ? el.soapA.value.trim() : '',
+      p: el.soapP ? el.soapP.value.trim() : ''
+    };
+
+    const hasSoap = soap.title || soap.s || soap.o || soap.a || soap.p;
+    const items = state.orderWriter.items;
+    const note = el.owMasterNote ? el.owMasterNote.value.trim() : '';
+
+    if (!hasSoap && !items.length) {
+      alert('กรุณากรอก Progress Note หรือเพิ่มรายการคำสั่งการรักษาอย่างน้อย 1 รายการ');
+      return;
+    }
+
+    // Verify all meds have dose, usage, freq
+    for (const it of items) {
+      if (it.kind === 'med') {
+        if (!it.dose || !it.drug_usage_code_id || !it.frequency_code_id) {
+          alert(`รายการยา "${it.label || 'ยา'}" ข้อมูลยังไม่ครบ (ต้องมี Dose, วิธีใช้, ความถี่) กรุณากดแก้ไขก่อนบันทึก`);
+          return;
+        }
+      }
+    }
+
+    if (el.owSubmitBtn) {
+      el.owSubmitBtn.disabled = true;
+      el.owSubmitBtn.innerHTML = `<span>กำลังบันทึกคำสั่ง...</span>`;
+    }
+
+    try {
+      const res = await apiFetch(`/api/patients/${ipdId}/orders`, {
+        method: 'POST',
+        body: JSON.stringify({ soap, items, note })
+      });
+
+      alert(res.message || 'บันทึกคำสั่งแพทย์เรียบร้อยแล้ว');
+      closeOrderWriterModal();
+
+      // Refresh orders list
+      await fetchAndRenderPatientOrders(ipdId);
+    } catch (err) {
+      if (el.owErrorBanner) {
+        el.owErrorBanner.textContent = err.message;
+        el.owErrorBanner.classList.remove('hidden');
+      } else {
+        alert('เกิดข้อผิดพลาดในการบันทึกคำสั่ง: ' + err.message);
+      }
+    } finally {
+      if (el.owSubmitBtn) {
+        el.owSubmitBtn.disabled = false;
+        el.owSubmitBtn.innerHTML = `
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+            <polyline points="17 21 17 13 7 13 7 21"/>
+            <polyline points="7 3 7 8 15 8"/>
+          </svg>
+          <span>บันทึกคำสั่งแพทย์</span>
+        `;
+      }
     }
   }
 

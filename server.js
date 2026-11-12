@@ -1346,6 +1346,488 @@ app.get('/api/patients/:hn/his-lab', authenticateToken, async (req, res) => {
   }
 });
 
+// GET /api/order-meta - Lookup items for creating Doctor Orders (drugs, labs, xrays, diets, usages, freqs, spclties)
+app.get('/api/order-meta', authenticateToken, async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    const kind = req.query.kind || 'all'; // all, med, lab, xray, diet, consult, meta
+
+    if (kind === 'meta') {
+      const [usagesRes, freqsRes, spcltiesRes, reasonsRes, neededsRes, labPrioRes, xrayPrioRes] = await Promise.all([
+        pool.query(`
+          SELECT id,
+                 usage_code AS raw_code,
+                 public.mnrh_nurse_route(doctor_text, usage_code) AS route_code,
+                 public.mnrh_nurse_route(doctor_text, usage_code) || COALESCE(' · ' || NULLIF(trim(human_text), ''), '') || ' (' || usage_code || ')' AS usage_label,
+                 usage_code,
+                 doctor_text,
+                 human_text
+          FROM public.drug_usage_codes
+          WHERE COALESCE(active, true)
+          ORDER BY display_order NULLS LAST, drug_usage_codes.usage_code
+        `),
+        pool.query(`
+          SELECT id,
+                 freq_code AS raw_code,
+                 public.mnrh_nurse_freq(freq_for_doctors, freq_name, freq_code) AS freq_code,
+                 freq_name,
+                 freq_for_doctors,
+                 is_stat
+          FROM public.frequency_codes
+          WHERE COALESCE(active, true)
+          ORDER BY display_order NULLS LAST, frequency_codes.freq_code
+        `),
+        pool.query(`SELECT id, name FROM spclties ORDER BY name`),
+        pool.query(`SELECT id, text FROM consult_reasons WHERE active ORDER BY id`),
+        pool.query(`SELECT id, text FROM consult_neededs WHERE active ORDER BY id`),
+        pool.query(`SELECT id, name FROM order_priorities ORDER BY id`),
+        pool.query(`SELECT id, priority_name AS name FROM xray_priorities ORDER BY id`)
+      ]);
+
+      return res.json({
+        usages: usagesRes.rows,
+        freqs: freqsRes.rows,
+        spclties: spcltiesRes.rows,
+        reasons: reasonsRes.rows,
+        neededs: neededsRes.rows,
+        labPriorities: labPrioRes.rows,
+        xrayPriorities: xrayPrioRes.rows
+      });
+    }
+
+    if (!q || q.length < 1) {
+      return res.json({ items: [] });
+    }
+
+    const results = [];
+
+    if (kind === 'all' || kind === 'med') {
+      const medRes = await pool.query(`
+        SELECT id, iname AS label, COALESCE(usage_unit_code, '') AS unit, generic_name
+        FROM public.drug_items
+        WHERE active AND (iname ILIKE '%' || $1 || '%' OR generic_name ILIKE '%' || $1 || '%' OR icode ILIKE $1 || '%')
+        ORDER BY (iname ILIKE $1 || '%') DESC, iname
+        LIMIT 10
+      `, [q]);
+      for (const r of medRes.rows) {
+        results.push({ kind: 'med', id: r.id, label: r.label, sub: r.unit, unit: r.unit });
+      }
+    }
+
+    if (kind === 'all' || kind === 'lab') {
+      const labRes = await pool.query(`
+        SELECT id, lab_name AS label
+        FROM public.lab_sets
+        WHERE active AND lab_name ILIKE '%' || $1 || '%'
+        ORDER BY (lab_name ILIKE $1 || '%') DESC, lab_name
+        LIMIT 8
+      `, [q]);
+      for (const r of labRes.rows) {
+        results.push({ kind: 'lab', id: r.id, label: r.label, sub: 'Lab Set' });
+      }
+    }
+
+    if (kind === 'all' || kind === 'xray') {
+      const xrayRes = await pool.query(`
+        SELECT id, xray_set_name AS label
+        FROM public.xray_sets
+        WHERE active AND xray_set_name ILIKE '%' || $1 || '%'
+        ORDER BY (xray_set_name ILIKE $1 || '%') DESC, xray_set_name
+        LIMIT 6
+      `, [q]);
+      for (const r of xrayRes.rows) {
+        results.push({ kind: 'xray', id: r.id, label: r.label, sub: 'X-Ray' });
+      }
+    }
+
+    if (kind === 'all' || kind === 'diet') {
+      const dietRes = await pool.query(`
+        SELECT d.id, d.diet_name AS label, COALESCE(t.diet_type_name, '') AS sub, d.diet_type_id
+        FROM public.diets d
+        LEFT JOIN public.diet_types t ON t.id = d.diet_type_id
+        WHERE d.active AND d.diet_name ILIKE '%' || $1 || '%'
+        ORDER BY d.diet_name
+        LIMIT 6
+      `, [q]);
+      for (const r of dietRes.rows) {
+        results.push({ kind: 'diet', id: r.id, label: r.label, sub: r.sub, diet_type_id: r.diet_type_id });
+      }
+    }
+
+    if (kind === 'all' || kind === 'consult') {
+      const consultRes = await pool.query(`
+        SELECT id, name AS label
+        FROM public.spclties
+        WHERE name ILIKE '%' || $1 || '%'
+        ORDER BY name
+        LIMIT 5
+      `, [q]);
+      for (const r of consultRes.rows) {
+        results.push({ kind: 'consult', id: r.id, label: 'Consult ' + r.label, sub: 'ปรึกษาแพทย์สาขา' });
+      }
+    }
+
+    res.json({ items: results });
+  } catch (err) {
+    console.error('Order meta search error:', err);
+    res.status(500).json({ error: 'ค้นหารายการไม่สำเร็จ: ' + err.message });
+  }
+});
+
+// POST /api/patients/:ipdId/orders - Create new Doctor Order with Progress Note, One Day, and Continuous Orders
+app.post('/api/patients/:ipdId/orders', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const ipdId = Number(req.params.ipdId);
+    const { soap, items, note } = req.body;
+    const userId = Number(req.user.id);
+
+    const soapObj = soap || {};
+    const soapTitle = (soapObj.title || '').trim();
+    const soapS = (soapObj.s || '').trim();
+    const soapO = (soapObj.o || '').trim();
+    const soapA = (soapObj.a || '').trim();
+    const soapP = (soapObj.p || '').trim();
+    const hasSoap = soapS !== '' || soapO !== '' || soapA !== '' || soapP !== '' || soapTitle !== '';
+
+    const orderItems = Array.isArray(items) ? items : [];
+
+    if (!hasSoap && orderItems.length === 0) {
+      return res.status(400).json({ error: 'กรุณากรอก Progress Note หรือเพิ่มรายการคำสั่งอย่างน้อย 1 รายการ' });
+    }
+
+    // Validate medication items
+    for (const it of orderItems) {
+      if (it.kind === 'med') {
+        const doseStr = String(it.dose || '').trim();
+        if (!doseStr) {
+          return res.status(400).json({ error: `รายการยา "${it.label || 'ยา'}" ต้องระบุ Dose` });
+        }
+        if (!it.drug_usage_code_id) {
+          return res.status(400).json({ error: `รายการยา "${it.label || 'ยา'}" ต้องเลือกวิธีใช้` });
+        }
+        if (!it.frequency_code_id) {
+          return res.status(400).json({ error: `รายการยา "${it.label || 'ยา'}" ต้องเลือกความถี่` });
+        }
+      }
+    }
+
+    await client.query('BEGIN');
+
+    // Get IPD patient info
+    const ptRes = await client.query(`
+      SELECT i.id, i.patient_id, i.spclty_id, i.current_bedmove_id, bm.ward_id, bm.bed_id
+      FROM ipds i
+      LEFT JOIN ipd_bedmoves bm ON bm.id = i.current_bedmove_id
+      WHERE i.id = $1
+    `, [ipdId]);
+
+    if (ptRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'ไม่พบข้อมูลผู้ป่วยในระบบ' });
+    }
+
+    const ipd = ptRes.rows[0];
+    const patientId = ipd.patient_id;
+    const wardId = ipd.ward_id;
+    const bedmoveId = ipd.current_bedmove_id;
+    const spcltyId = ipd.spclty_id;
+
+    const odCount = orderItems.filter(i => (i.type || 'D') === 'D').length;
+    const conCount = orderItems.filter(i => (i.type || 'D') === 'C').length;
+    const prgnCount = hasSoap ? 1 : 0;
+
+    // 1. Insert doctor_order_masters
+    const masterRes = await client.query(`
+      INSERT INTO public.doctor_order_masters (
+        ipd_id, patient_id, order_date, order_time,
+        bedmove_id, ward_id, spclty_id, order_type,
+        followup, homemed, confirm, note, saved_at,
+        od_count, con_count, prgn_count,
+        created_by, updated_by, created_at, updated_at
+      ) VALUES (
+        $1, $2, CURRENT_DATE, CURRENT_TIME,
+        $3, $4, $5, 'I',
+        false, false, false, $6, NOW(),
+        $7, $8, $9,
+        $10, $10, NOW(), NOW()
+      ) RETURNING id
+    `, [ipdId, patientId, bedmoveId, wardId, spcltyId, note || null, odCount, conCount, prgnCount, userId]);
+
+    const masterId = masterRes.rows[0].id;
+
+    // 2. Insert Progress Note (if any)
+    if (hasSoap) {
+      const pnRes = await client.query(`
+        INSERT INTO public.doctor_progress_notes (
+          ipd_id, progress_date, progress_time,
+          title, s_note, o_note, a_note, p_note,
+          created_by, created_at, updated_at
+        ) VALUES (
+          $1, CURRENT_DATE, CURRENT_TIME,
+          $2, $3, $4, $5, $6,
+          $7, NOW(), NOW()
+        ) RETURNING id
+      `, [
+        ipdId,
+        soapTitle || 'Progress note',
+        soapS || null,
+        soapO || null,
+        soapA || null,
+        soapP || null,
+        userId
+      ]);
+
+      const pnId = pnRes.rows[0].id;
+
+      await client.query(`
+        INSERT INTO public.doctor_orders (
+          doctor_order_master_id, doctor_order_type_id, order_type,
+          order_desc, ref_id, is_json, display_order,
+          created_at, updated_at
+        ) VALUES (
+          $1, 11, 'N',
+          $2, $3, false, 0,
+          NOW(), NOW()
+        )
+      `, [masterId, soapTitle || 'Progress note', pnId]);
+    }
+
+    // 3. Insert order items
+    let displayOrder = 1;
+    for (const it of orderItems) {
+      const ot = (it.type || 'D') === 'C' ? 'C' : 'D';
+
+      if (it.kind === 'med') {
+        // Fetch drug info
+        const drugRes = await client.query(`SELECT id, iname, usage_unit_code FROM drug_items WHERE id = $1`, [it.drug_item_id]);
+        if (drugRes.rows.length === 0) continue;
+        const drug = drugRes.rows[0];
+
+        // Format description
+        const routeRes = await client.query(`SELECT public.mnrh_nurse_route(doctor_text, usage_code) AS r FROM drug_usage_codes WHERE id = $1`, [Number(it.drug_usage_code_id) || 0]);
+        const freqRes = await client.query(`SELECT public.mnrh_nurse_freq(freq_for_doctors, freq_name, freq_code) AS f, is_stat FROM frequency_codes WHERE id = $1`, [Number(it.frequency_code_id) || 0]);
+
+        const routeText = (routeRes.rows[0] && routeRes.rows[0].r) || '';
+        const freqText = (freqRes.rows[0] && freqRes.rows[0].f) || '';
+        const isStat = (freqRes.rows[0] && freqRes.rows[0].is_stat) || false;
+
+        const doseStr = it.dose ? String(it.dose).trim() : '';
+        const desc = [drug.iname, doseStr, drug.usage_unit_code || '', routeText, freqText].filter(Boolean).join(' ').trim();
+
+        // Check allergy
+        const algCheck = await client.query(`
+          SELECT 1 FROM patient_allergies a
+          WHERE a.patient_id = $1 AND ($2 ILIKE '%' || a.agent || '%' OR a.agent ILIKE '%' || split_part($2, ' ', 1) || '%')
+          LIMIT 1
+        `, [patientId, drug.iname]);
+        const allergyHave = algCheck.rows.length > 0;
+
+        const ordRes = await client.query(`
+          INSERT INTO public.doctor_orders (
+            doctor_order_master_id, doctor_order_type_id, order_type,
+            order_desc, ref_id, is_json, display_order,
+            created_at, updated_at
+          ) VALUES (
+            $1, 5, $2,
+            $3, 0, false, $4,
+            NOW(), NOW()
+          ) RETURNING id
+        `, [masterId, ot, desc, displayOrder++]);
+
+        const ordId = ordRes.rows[0].id;
+
+        const medRes = await client.query(`
+          INSERT INTO public.doctor_order_medications (
+            doctor_order_id, drug_item_id, iname, itype, order_type,
+            dose, usage_unit_code, qty, drug_usage_code_id,
+            frequency_code_id, ipd_id, start_at, note,
+            stat, allergy_have,
+            created_at, updated_at
+          ) VALUES (
+            $1, $2, $3, 'M', $4,
+            $5, $6, $7, $8,
+            $9, $10, NOW(), $11,
+            $12, $13,
+            NOW(), NOW()
+          ) RETURNING id
+        `, [
+          ordId, drug.id, drug.iname, ot,
+          doseStr || null, drug.usage_unit_code || null, Number(it.qty) || null, Number(it.drug_usage_code_id) || null,
+          Number(it.frequency_code_id) || null, ipdId, it.note || null,
+          isStat, allergyHave
+        ]);
+
+        await client.query(`UPDATE public.doctor_orders SET ref_id = $1 WHERE id = $2`, [medRes.rows[0].id, ordId]);
+
+      } else if (it.kind === 'lab') {
+        const labRes = await client.query(`SELECT id, lab_name FROM lab_sets WHERE id = $1`, [it.lab_set_id]);
+        if (labRes.rows.length === 0) continue;
+        const set = labRes.rows[0];
+
+        const ordRes = await client.query(`
+          INSERT INTO public.doctor_orders (
+            doctor_order_master_id, doctor_order_type_id, order_type,
+            order_desc, ref_id, is_json, display_order,
+            created_at, updated_at
+          ) VALUES (
+            $1, 6, $2,
+            $3, 0, false, $4,
+            NOW(), NOW()
+          ) RETURNING id
+        `, [masterId, ot, 'Lab: ' + set.lab_name, displayOrder++]);
+
+        const ordId = ordRes.rows[0].id;
+
+        const subLabRes = await client.query(`
+          INSERT INTO public.doctor_order_labs (
+            lab_set_id, doctor_order_id, lab_set_name, lab_priority_id, order_date,
+            created_at, updated_at
+          ) VALUES (
+            $1, $2, $3, $4, CURRENT_DATE,
+            NOW(), NOW()
+          ) RETURNING id
+        `, [set.id, ordId, set.lab_name, Number(it.priority) || 1]);
+
+        await client.query(`UPDATE public.doctor_orders SET ref_id = $1 WHERE id = $2`, [subLabRes.rows[0].id, ordId]);
+
+      } else if (it.kind === 'xray') {
+        const xrayRes = await client.query(`SELECT id, xray_set_name FROM xray_sets WHERE id = $1`, [it.xray_set_id]);
+        if (xrayRes.rows.length === 0) continue;
+        const set = xrayRes.rows[0];
+
+        const ordRes = await client.query(`
+          INSERT INTO public.doctor_orders (
+            doctor_order_master_id, doctor_order_type_id, order_type,
+            order_desc, ref_id, is_json, display_order,
+            created_at, updated_at
+          ) VALUES (
+            $1, 7, $2,
+            $3, 0, false, $4,
+            NOW(), NOW()
+          ) RETURNING id
+        `, [masterId, ot, 'X-ray: ' + set.xray_set_name, displayOrder++]);
+
+        const ordId = ordRes.rows[0].id;
+
+        const radRes = await client.query(`
+          INSERT INTO public.doctor_order_rads (
+            xray_set_id, xray_set_name, doctor_order_id, xray_priority_id, clinical_info,
+            created_at, updated_at
+          ) VALUES (
+            $1, $2, $3, $4, $5,
+            NOW(), NOW()
+          ) RETURNING id
+        `, [set.id, set.xray_set_name, ordId, Number(it.priority) || 1, it.note || null]);
+
+        await client.query(`UPDATE public.doctor_orders SET ref_id = $1 WHERE id = $2`, [radRes.rows[0].id, ordId]);
+
+      } else if (it.kind === 'diet') {
+        const dietRes = await client.query(`SELECT id, diet_name, diet_type_id FROM diets WHERE id = $1`, [it.diet_id]);
+        if (dietRes.rows.length === 0) continue;
+        const diet = dietRes.rows[0];
+
+        const ordRes = await client.query(`
+          INSERT INTO public.doctor_orders (
+            doctor_order_master_id, doctor_order_type_id, order_type,
+            order_desc, ref_id, is_json, display_order,
+            created_at, updated_at
+          ) VALUES (
+            $1, 1, $2,
+            $3, 0, false, $4,
+            NOW(), NOW()
+          ) RETURNING id
+        `, [masterId, ot, 'Diet: ' + diet.diet_name + (it.note ? ` (${it.note})` : ''), displayOrder++]);
+
+        const ordId = ordRes.rows[0].id;
+
+        const ddRes = await client.query(`
+          INSERT INTO public.doctor_order_diets (
+            doctor_order_id, diet_type_id, diet_id, note,
+            created_at, updated_at
+          ) VALUES (
+            $1, $2, $3, $4,
+            NOW(), NOW()
+          ) RETURNING id
+        `, [ordId, diet.diet_type_id || 1, diet.id, it.note || null]);
+
+        await client.query(`UPDATE public.doctor_orders SET ref_id = $1 WHERE id = $2`, [ddRes.rows[0].id, ordId]);
+
+      } else if (it.kind === 'consult') {
+        const spRes = await client.query(`SELECT name FROM spclties WHERE id = $1`, [Number(it.spclty_id) || 0]);
+        if (spRes.rows.length === 0) continue;
+        const spName = spRes.rows[0].name;
+
+        const cidRes = await client.query(`
+          INSERT INTO public.consults (
+            ipd_id, spclty_id, clinical_diag, clinical_info,
+            consult_reason_id, consult_needed_id,
+            ward_id, bed_id, is_other, is_reply, saved,
+            created_at, updated_at
+          ) VALUES (
+            $1, $2, $3, $4,
+            $5, $6,
+            $7, $8, false, false, true,
+            NOW(), NOW()
+          ) RETURNING id
+        `, [
+          ipdId, Number(it.spclty_id), it.diag || null, it.note || null,
+          it.reason_id ? Number(it.reason_id) : null, it.needed_id ? Number(it.needed_id) : null,
+          wardId, ipd.bed_id
+        ]);
+
+        const cid = cidRes.rows[0].id;
+
+        const ordRes = await client.query(`
+          INSERT INTO public.doctor_orders (
+            doctor_order_master_id, doctor_order_type_id, order_type,
+            order_desc, ref_id, is_json, display_order,
+            created_at, updated_at
+          ) VALUES (
+            $1, 12, 'Q',
+            $2, $3, false, $4,
+            NOW(), NOW()
+          ) RETURNING id
+        `, [masterId, 'Consult ' + spName, cid, displayOrder++]);
+
+        await client.query(`UPDATE public.consults SET doctor_order_id = $1 WHERE id = $2`, [ordRes.rows[0].id, cid]);
+
+      } else {
+        // General text order (Activity=2, Record=4, Other=8, Operation=9)
+        const textStr = (it.text || it.label || '').trim();
+        if (!textStr) continue;
+        const typeId = [2, 3, 4, 8, 9].includes(Number(it.type_id)) ? Number(it.type_id) : 8;
+
+        await client.query(`
+          INSERT INTO public.doctor_orders (
+            doctor_order_master_id, doctor_order_type_id, order_type,
+            order_desc, is_json, display_order,
+            created_at, updated_at
+          ) VALUES (
+            $1, $2, $3,
+            $4, false, $5,
+            NOW(), NOW()
+          )
+        `, [masterId, typeId, ot, textStr, displayOrder++]);
+      }
+    }
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      masterId,
+      message: 'บันทึกคำสั่งแพทย์เรียบร้อยแล้ว'
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Create doctor order error:', err);
+    res.status(500).json({ error: 'ไม่สามารถบันทึกคำสั่งแพทย์ได้: ' + err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // Fallback to index.html for SPA routing
 app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
